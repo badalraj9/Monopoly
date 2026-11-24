@@ -12,6 +12,15 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ROOM_CODE_REGEX = /^[A-Z0-9]{4}$/;
 const TURN_ACTIONS = ['roll', 'endTurn', 'buy', 'liquidate'];
 
+if (!globalThis.__monopoly_store) {
+  globalThis.__monopoly_store = {
+    store: new Map(),
+    sets: new Map()
+  };
+}
+export const MEMORY_ROOMS = globalThis.__monopoly_store.store;
+globalThis.MEMORY_ROOMS = MEMORY_ROOMS;
+
 // ==========================================
 // 1. Storage Clients (Upstash REST, Native TCP, In-Memory)
 // ==========================================
@@ -755,6 +764,55 @@ async function saveRoomToStorage(room, req, expectedVersion) {
   const roomCode = room.code.toUpperCase();
   const roomKey = `${KEY_PREFIX}${roomCode}`;
   const verKey = `${VER_PREFIX}${roomCode}`;
+
+  if (room.closed || room.ended) {
+    try {
+      await storage.del(roomKey);
+    } catch {}
+    try {
+      await storage.del(verKey);
+    } catch {}
+    if (Array.isArray(room.seats)) {
+      for (const seat of room.seats) {
+        if (seat.token) {
+          try {
+            await storage.del(`${TOKEN_PREFIX}${seat.token}`);
+          } catch {}
+        }
+      }
+    }
+    try {
+      await storage.srem(ROOMS_SET_KEY, roomCode);
+    } catch {}
+
+    try {
+      if (typeof MEMORY_ROOMS !== 'undefined' && MEMORY_ROOMS) {
+        MEMORY_ROOMS.delete(roomCode);
+        MEMORY_ROOMS.delete(roomKey);
+        MEMORY_ROOMS.delete(verKey);
+      }
+      if (globalThis.MEMORY_ROOMS) {
+        globalThis.MEMORY_ROOMS.delete(roomCode);
+        globalThis.MEMORY_ROOMS.delete(roomKey);
+        globalThis.MEMORY_ROOMS.delete(verKey);
+      }
+      if (globalThis.__monopoly_store) {
+        globalThis.__monopoly_store.store.delete(roomKey);
+        globalThis.__monopoly_store.store.delete(verKey);
+        if (Array.isArray(room.seats)) {
+          for (const seat of room.seats) {
+            if (seat.token) {
+              globalThis.__monopoly_store.store.delete(`${TOKEN_PREFIX}${seat.token}`);
+            }
+          }
+        }
+        const s = globalThis.__monopoly_store.sets.get(ROOMS_SET_KEY);
+        if (s) s.delete(roomCode);
+      }
+    } catch {}
+    return;
+  }
+
   const newVersion = room.stateVersion || 1;
 
   const payload = JSON.stringify({
@@ -969,8 +1027,11 @@ export default async function handler(req, res) {
     const hasSince = sinceParam !== undefined && sinceParam !== null && sinceParam !== '';
 
     const room = await getRoomFromStorage(code, req);
-    if (!room) {
-      return sendJson(res, 404, { error: 'Room not found.' });
+    if (!room || room.closed) {
+      return sendJson(res, 404, {
+        closed: true,
+        error: 'This room has been closed by the host.'
+      });
     }
 
     // Refresh TTL on room activity
@@ -1067,8 +1128,8 @@ export default async function handler(req, res) {
       }
 
       let room = await getRoomFromStorage(code, req);
-      if (!room) {
-        return sendJson(res, 404, { error: 'Room not found.' });
+      if (!room || room.closed) {
+        return sendJson(res, 404, { closed: true, error: room?.closed ? 'This room has been closed by the host.' : 'Room not found.' });
       }
 
       // Check if this player is rejoining with existing token
@@ -1175,8 +1236,8 @@ export default async function handler(req, res) {
       }
 
       const room = await getRoomFromStorage(code, req);
-      if (!room) {
-        return sendJson(res, 404, { error: 'Room not found.' });
+      if (!room || room.closed) {
+        return sendJson(res, 404, { closed: true, error: room?.closed ? 'This room has been closed by the host.' : 'Room not found.' });
       }
 
       const seat = room.seats.find(s => s.token === token);
@@ -1221,8 +1282,8 @@ export default async function handler(req, res) {
       }
 
       const room = await getRoomFromStorage(code, req);
-      if (!room) {
-        return sendJson(res, 404, { error: 'Room not found.' });
+      if (!room || room.closed) {
+        return sendJson(res, 404, { closed: true, error: room?.closed ? 'This room has been closed by the host.' : 'Room not found.' });
       }
 
       const seat = room.seats.find(s => s.token === token);
@@ -1230,7 +1291,22 @@ export default async function handler(req, res) {
         return sendJson(res, 403, { error: 'Player seat is no longer active.' });
       }
 
-      const clientAction = body.action || query.action || 'action';
+      const clientAction = body.action || query.action || action || 'action';
+
+      // Host Action: End Game and immediately release all server resources
+      if (clientAction === 'endGame' || clientAction === 'closeRoom' || action === 'endGame' || action === 'closeRoom') {
+        if (seat.index !== 0) {
+          return sendJson(res, 403, { error: 'Only the room host can end the game and close the room.' });
+        }
+        room.closed = true;
+        room.ended = true;
+        await saveRoomToStorage(room, req);
+        return sendJson(res, 200, {
+          success: true,
+          closed: true,
+          message: 'Room ended and resources released.'
+        });
+      }
 
       // Stuck-State Recovery: Action 'skipInactive'
       if (clientAction === 'skipInactive') {

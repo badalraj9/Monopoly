@@ -1282,6 +1282,7 @@ export default function App() {
   const [giveJailCard, setGiveJailCard] = useState(false);
   const [wantJailCard, setWantJailCard] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState<number | null>(null);
+  const [confirmEndGame, setConfirmEndGame] = useState(false);
   const [eventCard, setEventCard] = useState<EventCardData | null>(null);
   const [transfers, setTransfers] = useState<FloatingTransferItem[]>([]);
   const [bankOpen, setBankOpen] = useState(false);
@@ -1469,6 +1470,44 @@ export default function App() {
     }
   }, []);
 
+  const cleanRoomStorage = useCallback(() => {
+    const code = roomRef.current?.code || localStorage.getItem('business-room-code');
+    localStorage.removeItem('business-room-code');
+    if (code) {
+      localStorage.removeItem(`business-player-token:${code}`);
+    }
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('business-player-token:')) {
+        localStorage.removeItem(k);
+      }
+    }
+  }, []);
+
+  const handleRemoteRoomClosed = useCallback((msg?: string) => {
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    if (socketRef.current) {
+      try {
+        socketRef.current.close();
+      } catch {}
+      socketRef.current = null;
+    }
+    cleanRoomStorage();
+    setRoom(null);
+    setRoomSeat(-1);
+    setRoomLink('');
+    setRollPending(false);
+    dispatch({ type: 'LOAD', game: blank() });
+    const message = msg || 'The host has ended the match and closed the room.';
+    setRoomError(message);
+    setConnectionState(message);
+    addTransfer(message, 'loss');
+    setHomeView(true);
+  }, [cleanRoomStorage, addTransfer]);
+
   const scheduleNextPoll = useCallback((customDelay?: number) => {
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
@@ -1499,7 +1538,17 @@ export default function App() {
     const currentVer = lastStateVersion.current;
     try {
       const res = await fetch(`${resolveApiUrl()}?code=${encodeURIComponent(code)}&since=${currentVer}`, { headers: getApiHeaders() });
+      if (res.status === 404) {
+        const errData = await res.json().catch(() => ({}));
+        handleRemoteRoomClosed(errData?.error || 'The host has ended the match and closed the room.');
+        return;
+      }
       if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (errData?.closed || (typeof errData?.error === 'string' && errData.error.toLowerCase().includes('closed'))) {
+          handleRemoteRoomClosed(errData?.error || 'The host has ended the match and closed the room.');
+          return;
+        }
         throw new Error(`Poll HTTP ${res.status}`);
       }
       if (pollFailuresRef.current > 0) {
@@ -1507,6 +1556,10 @@ export default function App() {
         setIsReconnecting(false);
       }
       const data = await res.json();
+      if (data.closed || (typeof data.error === 'string' && data.error.toLowerCase().includes('closed'))) {
+        handleRemoteRoomClosed(data.error || 'The host has ended the match and closed the room.');
+        return;
+      }
       if (!data.unchanged) {
         if (!data.stateVersion || data.stateVersion > currentVer) {
           if (data.stateVersion) {
@@ -1535,7 +1588,7 @@ export default function App() {
     } finally {
       isPollingInFlight.current = false;
     }
-  }, [resolveApiUrl, getApiHeaders, applyRoomData, scheduleNextPoll, getAdaptiveInterval]);
+  }, [resolveApiUrl, getApiHeaders, applyRoomData, scheduleNextPoll, getAdaptiveInterval, handleRemoteRoomClosed]);
 
   // Fix 409 silent failure: resync and retry up to 3 times on conflict
   const postRoomAction = useCallback(async (actionType: string, extra: Record<string, any> = {}, retryCount = 0): Promise<any> => {
@@ -1570,8 +1623,23 @@ export default function App() {
         }
         return syncedData || conflictData;
       }
-      if (!res.ok) return;
+      if (res.status === 404) {
+        const errData = await res.json().catch(() => ({}));
+        handleRemoteRoomClosed(errData?.error || 'The host has ended the match and closed the room.');
+        return;
+      }
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (errData?.closed || (typeof errData?.error === 'string' && errData.error.toLowerCase().includes('closed'))) {
+          handleRemoteRoomClosed(errData?.error || 'The host has ended the match and closed the room.');
+        }
+        return;
+      }
       const data = await res.json();
+      if (data.closed || (typeof data.error === 'string' && data.error.toLowerCase().includes('closed'))) {
+        handleRemoteRoomClosed(data.error || 'The host has ended the match and closed the room.');
+        return;
+      }
       if (data.stateVersion) {
         lastStateVersion.current = data.stateVersion;
       }
@@ -1579,7 +1647,7 @@ export default function App() {
     } catch (err) {
       console.warn('postRoomAction error:', err);
     }
-  }, [resolveApiUrl, getApiHeaders, pollRoom]);
+  }, [resolveApiUrl, getApiHeaders, pollRoom, handleRemoteRoomClosed]);
 
   const connectRoomRest = useCallback(async (kind: 'create' | 'join' | 'resume') => {
     setRoomError('');
@@ -1681,9 +1749,17 @@ export default function App() {
       };
       ws.onmessage = e => {
         const m = JSON.parse(e.data);
+        if (m.type === 'roomClosed') {
+          handleRemoteRoomClosed(m.reason || 'The host has ended the match and closed the room.');
+          return;
+        }
         if (m.stateVersion && m.stateVersion < lastStateVersion.current) return;
         if (m.stateVersion) lastStateVersion.current = m.stateVersion;
         if (m.type === 'error' || m.type === 'rejected') {
+          if (m.closed || (typeof m.message === 'string' && m.message.toLowerCase().includes('closed'))) {
+            handleRemoteRoomClosed(m.message || 'The host has ended the match and closed the room.');
+            return;
+          }
           setConnectionState(m.message || m.reason);
           setRollPending(false);
           setRoomError(m.message || m.reason);
@@ -1752,7 +1828,7 @@ export default function App() {
     } catch {
       connectRoomRest(kind);
     }
-  }, [multiplayerMode, isVercel, hostServerUrl, connectRoomRest, resolveWsUrl, nick, joinCode]);
+  }, [multiplayerMode, isVercel, hostServerUrl, connectRoomRest, resolveWsUrl, nick, joinCode, handleRemoteRoomClosed]);
 
   const p = game.players[game.turn];
   const visiblePos = visualPos[game.turn] ?? game.moveFrom ?? p?.pos ?? 0;
@@ -1762,6 +1838,7 @@ export default function App() {
   const receiveValue = wantCash + wantProps.reduce((v, id) => v + (board[id].price || 0), 0) + (wantJailCard ? 500 : 0);
   const offerPercent = Math.min(100, Math.round((offerValue / Math.max(1, offerValue + receiveValue)) * 100));
   const controlPlayer = room && roomSeat >= 0 ? roomSeat : game.turn;
+  const isHost = room ? roomSeat === 0 : true;
   const manager = inspectedPlayer ?? controlPlayer;
   const mp = game.players[manager] || p;
   const assetsPlayer = mp;
@@ -1882,6 +1959,45 @@ export default function App() {
   const handleConfirmLeave = useCallback((idx: number) => {
     setConfirmLeave(idx);
   }, []);
+  const handleRequestEndGame = useCallback(() => {
+    setConfirmEndGame(true);
+  }, []);
+  const handleConfirmEndGame = useCallback(async () => {
+    setConfirmEndGame(false);
+    if (roomRef.current) {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        try {
+          socketRef.current.send(JSON.stringify({ type: 'action', action: 'endGame' }));
+        } catch {}
+      }
+      postRoomAction('endGame').catch(() => {});
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      if (socketRef.current) {
+        try {
+          socketRef.current.close();
+        } catch {}
+        socketRef.current = null;
+      }
+      cleanRoomStorage();
+      setRoom(null);
+      setRoomSeat(-1);
+      setRoomLink('');
+    }
+    localStorage.removeItem(KEY);
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    setRollPending(false);
+    dispatch({ type: 'LOAD', game: blank() });
+    setHomeView(true);
+    setRoomError('');
+    setConnectionState('Match ended. Room resources released.');
+    addTransfer('Match ended. Room resources released.', 'gain');
+  }, [postRoomAction, cleanRoomStorage, addTransfer]);
   const handleCloseBank = useCallback(() => setBankOpen(false), []);
   const handleBorrow = useCallback((tier: LoanTier) => dispatch({ type: 'LOAN', tier }), []);
   const handleRepayEarly = useCallback((amt: number) => dispatch({ type: 'LOAN_REPAY', amount: amt }), []);
@@ -1990,7 +2106,7 @@ export default function App() {
   // Modal navigation history handler - replaces pushState with replaceState to prevent history flooding
   useEffect(() => {
     const anyModal =
-      selectedTile !== null || tradeOpen || rulesOpen || drawer || setup || confirmLeave !== null || bankOpen || eventCard !== null || playersModalOpen;
+      selectedTile !== null || tradeOpen || rulesOpen || drawer || setup || confirmLeave !== null || confirmEndGame || bankOpen || eventCard !== null || playersModalOpen;
     if (anyModal) {
       window.history.replaceState({ modalOpen: true }, '');
       const f = (e: KeyboardEvent) => {
@@ -2001,6 +2117,7 @@ export default function App() {
           setDrawer(false);
           setSetup(false);
           setConfirmLeave(null);
+          setConfirmEndGame(false);
           setBankOpen(false);
           setPlayersModalOpen(false);
           handleCloseEventCard();
@@ -2013,6 +2130,7 @@ export default function App() {
         setDrawer(false);
         setSetup(false);
         setConfirmLeave(null);
+        setConfirmEndGame(false);
         setBankOpen(false);
         setPlayersModalOpen(false);
         handleCloseEventCard();
@@ -2031,6 +2149,7 @@ export default function App() {
     drawer,
     setup,
     confirmLeave !== null,
+    confirmEndGame,
     bankOpen,
     eventCard !== null,
     playersModalOpen,
@@ -2658,6 +2777,8 @@ export default function App() {
         onCopyRoom={handleCopyRoom}
         copiedRoom={copiedCode}
         connectionStatus={room ? connectionStatus : undefined}
+        isHost={isHost}
+        onEndGame={handleRequestEndGame}
       />
       <div className="play-layout">
         <section className="board-area">
@@ -3381,6 +3502,26 @@ export default function App() {
                 }}
               >
                 Confirm Leave
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {confirmEndGame && (
+        <div className="place-overlay" onClick={() => setConfirmEndGame(false)}>
+          <section className="confirm-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="endgame-title">
+            <h3 id="endgame-title">End Match &amp; Close Room?</h3>
+            <p>This will terminate the game for all players, immediately release server resources, and return everyone to the lobby.</p>
+            <div className="confirm-actions">
+              <button className="secondary" onClick={() => setConfirmEndGame(false)}>
+                Keep Playing
+              </button>
+              <button
+                className="primary danger"
+                onClick={handleConfirmEndGame}
+              >
+                End Game &amp; Release Room
               </button>
             </div>
           </section>

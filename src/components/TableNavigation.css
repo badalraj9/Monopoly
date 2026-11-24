@@ -426,5 +426,76 @@
     gap: 4px;
     font-size: 10px;
   }
+  .nav-end-game-btn {
+    padding: 0 7px;
+  }
+  .nav-end-game-btn .end-game-label {
+    display: none;
+  }
 }
+
+/* End Game Button */
+.nav-end-game-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(200, 75, 49, 0.08);
+  color: #c84b31;
+  border: 1px solid rgba(200, 75, 49, 0.25);
+  border-radius: 6px;
+  padding: 4px 8px;
+  height: 30px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.nav-end-game-btn:hover {
+  background: #c84b31;
+  color: #ffffff;
+  border-color: #c84b31;
+  box-shadow: 0 2px 6px rgba(200, 75, 49, 0.3);
+}
+
+.nav-end-game-btn:hover svg {
+  color: #ffffff;
+}
+
+.nav-end-game-btn:active {
+  transform: scale(0.97);
+}
+
+.dock-btn.dock-btn-danger {
+  color: #c84b31;
+}
+
+.dock-btn.dock-btn-danger:hover {
+  background: rgba(200, 75, 49, 0.1);
+  color: #b33920;
+}
+
+.dock-btn.dock-btn-danger:active {
+  background: #c84b31;
+  color: #ffffff;
+  transform: scale(0.96);
+}
+
+@media (max-width: 480px) {
+  .nav-end-game-btn {
+    padding: 0 6px;
+    height: 28px;
+  }
+  .mobile-action-dock {
+    padding: 3px 4px;
+    gap: 2px;
+  }
+  .dock-btn {
+    min-width: 44px;
+    padding: 5px 6px;
+  }
+}
+
 

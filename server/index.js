@@ -1,6 +1,6 @@
 import { randomUUID, randomInt } from 'node:crypto';
 import { WebSocketServer } from './websocket.js';
-import { initRedis, saveRoom, getRoom, getRoomCodeByToken, deleteRoom, loadAllPersistedRooms } from './redis.js';
+import { initRedis, saveRoom, getRoom, getRoomCodeByToken, deleteRoom, loadAllPersistedRooms, getRedisClient } from './redis.js';
 
 export function startRoomServer(port = Number(process.env.PORT || 8787)) {
   initRedis();
@@ -119,11 +119,57 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
       if (!seat) return send(socket, { type: 'error', message: 'Player seat is no longer active.' });
       enqueue(room, async () => {
         room.lastActive = Date.now();
+        const action = msg.action || msg.type;
+        if (action === 'endGame' || action === 'closeRoom') {
+          if (seat.index !== 0) {
+            return send(socket, { type: 'rejected', reason: 'Only the host can end the game.' });
+          }
+          broadcast(room, {
+            type: 'roomClosed',
+            reason: 'The host has ended the game and closed the room.'
+          });
+          clearRollInFlight(room);
+          if (room.watchdog) {
+            clearTimeout(room.watchdog);
+            room.watchdog = null;
+          }
+          if (room.timer) {
+            clearTimeout(room.timer);
+            room.timer = null;
+          }
+          if (room.interval) {
+            clearInterval(room.interval);
+            room.interval = null;
+          }
+          rooms.delete(room.code);
+          try {
+            await deleteRoom(room.code);
+            const client = getRedisClient();
+            if (client) {
+              for (const s of room.seats) {
+                if (s.token) {
+                  await client.del(`monopoly:token:${s.token}`).catch(() => {});
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`[Redis] delete storage keys error for ${room.code}:`, err?.message || err);
+          }
+          for (const s of room.seats) {
+            if (s.socket && (s.socket.readyState === 1 || s.socket.readyState === 0)) {
+              try {
+                s.socket.close(1000, 'Room ended by host');
+              } catch {}
+            }
+          }
+          return;
+        }
+
         const turnActions = new Set(['roll', 'resolve', 'buy', 'pass', 'endTurn', 'jailChoice', 'gameState']);
         if (turnActions.has(msg.action) && seat.index !== room.activeSeat) {
           return send(socket, { type: 'rejected', reason: 'Only the active player can take a turn action.' });
         }
-        if (!turnActions.has(msg.action) && !new Set(['inspect', 'upgrade', 'mortgage', 'unmortgage', 'loan', 'trade', 'gameState', 'manageState', 'auctionState', 'tradeState', 'leaveState']).has(msg.action)) {
+        if (!turnActions.has(msg.action) && !new Set(['inspect', 'upgrade', 'mortgage', 'unmortgage', 'loan', 'trade', 'gameState', 'manageState', 'auctionState', 'tradeState', 'leaveState', 'endGame', 'closeRoom']).has(msg.action)) {
           return send(socket, { type: 'rejected', reason: 'Unknown room action.' });
         }
         if (msg.action === 'endTurn' && Number.isInteger(msg.nextSeat)) {

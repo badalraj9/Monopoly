@@ -11,7 +11,8 @@ import {
   Home,
   ChevronDown,
   Copy,
-  Check
+  Check,
+  LogOut
 } from 'lucide-react';
 import './TableNavigation.css';
 
@@ -46,6 +47,8 @@ export interface TableNavigationProps {
   onCopyRoom?: () => void;
   copiedRoom?: boolean;
   connectionStatus?: 'connected' | 'reconnecting' | 'error';
+  isHost?: boolean;
+  onEndGame?: () => void;
 }
 
 function formatTimer(secs: number): string {
@@ -76,7 +79,9 @@ export const TableNavigation: React.FC<TableNavigationProps> = React.memo(functi
   roomCode,
   onCopyRoom,
   copiedRoom,
-  connectionStatus
+  connectionStatus,
+  isHost = false,
+  onEndGame
 }) {
   return (
     <>
@@ -157,6 +162,19 @@ export const TableNavigation: React.FC<TableNavigationProps> = React.memo(functi
             </div>
           )}
 
+          {isHost && onEndGame && (
+            <button
+              type="button"
+              className="nav-end-game-btn"
+              onClick={onEndGame}
+              title="End game and release room"
+              aria-label="End game"
+            >
+              <LogOut size={13} />
+              <span className="end-game-label">End Game</span>
+            </button>
+          )}
+
           {connectionStatus && (
             <div
               className={`nav-connection-dot status-${connectionStatus}`}
@@ -235,6 +253,19 @@ export const TableNavigation: React.FC<TableNavigationProps> = React.memo(functi
           <CircleHelp size={16} />
           <span>Rules</span>
         </button>
+
+        {isHost && onEndGame && (
+          <button
+            type="button"
+            className="dock-btn dock-btn-danger"
+            onClick={onEndGame}
+            title="End game and release room"
+            aria-label="End game"
+          >
+            <LogOut size={16} />
+            <span>End Game</span>
+          </button>
+        )}
       </nav>
     </>
   );
