@@ -69,5 +69,27 @@ Harden the deployed Monopoly game (Vercel + Upstash Redis, polling transport) so
 
 ---
 
-### Stage 3: Experience & Verification (In Progress)
+### Stage 3: Experience & Verification (Completed)
+- **Deploy Verifier (`api/room.js`, `.env.example`, `README.md`)**:
+  - Implemented strict Vercel deployment guard: When running on Vercel (`process.env.VERCEL === '1'` or `process.env.VERCEL_ENV`), missing Upstash Redis credentials now fail loudly with `HTTP 500 { error: 'Vercel Deployment Error: Missing Upstash Redis credentials...', code: 'UPSTASH_CONFIG_MISSING' }` instead of silently falling back to stateless in-memory storage (which caused rooms to be lost across lambdas).
+  - Created `.env.example` with clear definitions for `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
+  - Updated `README.md` with complete step-by-step Vercel + Upstash deployment steps, multiplayer OCC architecture documentation, and test suite commands.
+  - Verified with `tests/deploy-test.mjs`: 13/13 passed.
+- **Mobile UX & Polish (`src/App.tsx`, `src/style.css`, `src/components/TableNavigation.tsx`, `src/components/TableNavigation.css`)**:
+  - Enforced minimum 44px tap targets for all touch-interactive buttons and navigation controls on mobile viewports (360px–414px).
+  - Prevented horizontal scrolling and overflow on mobile devices.
+  - Added visible Room Code with one-click copy button and responsive "Copied!" feedback in both lobby and active table navigation dock.
+  - Added live 3-state Connection Status Dot: Green (connected), Pulsing Amber (reconnecting), Red (error/offline).
+  - Added prominent Turn Indicator banner: "YOUR TURN — Roll Dice" with gold/emerald highlight vs "Waiting for [Player]...".
+  - Added prominent Last-Action Log snippet with "LATEST" badge.
+  - Set minimum 16px font size on inputs to prevent mobile iOS auto-zoom.
+  - Verified with `tests/mobile-ux-test.mjs`: 22/22 passed.
+- **Chaos Suite & Invariant Verification (`tests/chaos-test.mjs`)**:
+  - Executed 120 full match chaos test simulating 4, 5, and 6 players across 9,600 total turns in 6.11s.
+  - **Result: 120/120 matches passed (100.0% pass rate, 0.0% failure rate)**.
+  - Handled 9,600 simultaneous OCC conflict injections with 409 responses and clean client auto-recovery.
+  - Verified 960 session reconnects across matches.
+  - 100% invariant preservation: Rupee-for-rupee total money conservation, zero dual ownership, strictly non-negative building counts, supply limits (max 32 houses, 12 hotels) respected, monotonic state versions, and every match reached a clean winner/GAME_OVER state.
+- **Production Build**:
+  - `npm run build` (`tsc -b && vite build`): Succeeded cleanly with 0 errors across 1,596 modules.
 
