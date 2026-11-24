@@ -5,9 +5,29 @@ export interface PawnTokenProps {
   color: string;
   index: number;
   isMoving?: boolean;
+  size?: number | string | { width?: number | string; height?: number | string };
 }
 
-export function PawnToken({ name, color, index, isMoving }: PawnTokenProps) {
+export const PawnToken = React.memo(function PawnToken({
+  name,
+  color,
+  index,
+  isMoving,
+  size
+}: PawnTokenProps) {
+  let tokenWidth: number | string = 20;
+  let tokenHeight: number | string = 25;
+  if (typeof size === 'number') {
+    tokenWidth = size;
+    tokenHeight = Math.round(size * 1.25);
+  } else if (typeof size === 'string') {
+    tokenWidth = size;
+    tokenHeight = size;
+  } else if (size && typeof size === 'object') {
+    if (size.width !== undefined) tokenWidth = size.width;
+    if (size.height !== undefined) tokenHeight = size.height;
+  }
+
   const cleanId = `${index}-${name.replace(/[^a-zA-Z0-9]/g, '')}`;
   const brassGradId = `brass-pawn-${cleanId}`;
   const gemGradId = `gem-pawn-${cleanId}`;
@@ -18,8 +38,8 @@ export function PawnToken({ name, color, index, isMoving }: PawnTokenProps) {
     <svg
       className={`pawn-token ${isMoving ? 'hopping' : ''}`}
       viewBox="0 0 24 30"
-      width="20"
-      height="25"
+      width={tokenWidth}
+      height={tokenHeight}
       aria-label={`Player ${name}`}
       role="img"
     >
@@ -130,6 +150,6 @@ export function PawnToken({ name, color, index, isMoving }: PawnTokenProps) {
       </g>
     </svg>
   );
-}
+});
 
 export default PawnToken;

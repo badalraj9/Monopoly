@@ -31,6 +31,14 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
   function snapshot(room) {
     return { type: 'room', code: room.code, players: room.seats.map(({ name, index, socket }) => ({ name, index, online: socket?.readyState === 1 })), activeSeat: room.activeSeat, game: room.game, stateVersion: room.stateVersion };
   }
+  function clearRollInFlight(room) {
+    room.rollInFlight = false;
+    room.rollingSeat = null;
+    if (room.rollWatchdog) {
+      clearTimeout(room.rollWatchdog);
+      room.rollWatchdog = null;
+    }
+  }
   function enqueue(room, task) {
     room.queue = room.queue.then(task).catch(error => console.error('room queue:', error));
   }
@@ -121,13 +129,13 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
         if (msg.action === 'endTurn' && Number.isInteger(msg.nextSeat)) {
           room.activeSeat = msg.nextSeat;
           if (msg.state && typeof msg.state === 'object') room.game = msg.state;
-          room.rollInFlight = false;
+          clearRollInFlight(room);
         }
-        if (msg.action === 'gameState' && msg.state && typeof msg.state === 'object') { room.game = msg.state; if (msg.state.phase !== 'WAIT_FOR_ROLL') room.rollInFlight = false; }
+        if (msg.action === 'gameState' && msg.state && typeof msg.state === 'object') { room.game = msg.state; if (msg.state.phase !== 'WAIT_FOR_ROLL') clearRollInFlight(room); }
         if (msg.action === 'leaveState') {
           const before = room.game, next = msg.state, oldPlayer = before?.players?.[seat.index], newPlayer = next?.players?.[seat.index];
           if (!before || !next || !oldPlayer?.active || newPlayer?.active || newPlayer.owned.length || newPlayer.cash !== 0 || next.players.some((player,i) => i !== seat.index && JSON.stringify(player) !== JSON.stringify(before.players[i]))) return send(socket, { type: 'rejected', reason: 'A player can only leave their own seat.' });
-          room.game = next; room.activeSeat = next.turn; room.rollInFlight = false;
+          room.game = next; room.activeSeat = next.turn; clearRollInFlight(room);
         }
         if (msg.action === 'auctionState') {
           if (room.game?.phase !== 'AUCTION' || room.game.auction?.turn !== seat.index || msg.state?.phase === undefined) return send(socket, { type: 'rejected', reason: 'It is not your auction action.' });
@@ -152,6 +160,13 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
         if (msg.action === 'roll') {
           if (room.rollInFlight || room.game?.phase !== 'WAIT_FOR_ROLL') return send(socket, { type: 'rejected', reason: 'The current turn is not ready for a roll.' });
           room.rollInFlight = true;
+          room.rollingSeat = seat.index;
+          if (room.rollWatchdog) clearTimeout(room.rollWatchdog);
+          room.rollWatchdog = setTimeout(() => {
+            if (room.rollInFlight) {
+              clearRollInFlight(room);
+            }
+          }, 5000);
           const dice = [randomInt(1, 7), randomInt(1, 7)];
           const consecutiveDoubles = dice[0] === dice[1] ? (room.game.rolls || 0) + 1 : 0;
           broadcast(room, { type: 'action', action: 'dice', by: seat.index, dice, consecutiveDoubles, rollId: ++room.rollId, activeSeat: room.activeSeat, stateVersion: ++room.stateVersion });
@@ -191,6 +206,10 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
       clearInterval(pingInterval);
       const room = rooms.get(socket.roomCode);
       if (room) {
+        const seat = room.seats.find(s => s.token === socket.playerToken);
+        if (room.rollInFlight && (!seat || seat.index === room.activeSeat || seat.index === room.rollingSeat)) {
+          clearRollInFlight(room);
+        }
         room.lastActive = Date.now();
         room.stateVersion++;
         saveRoom(room);

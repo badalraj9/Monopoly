@@ -10,4 +10,21 @@ const roomServer: Plugin = {
   },
 };
 
-export default defineConfig({ plugins: [react(), roomServer] });
+export default defineConfig({
+  plugins: [react(), roomServer],
+  esbuild: {
+    drop: ['console', 'debugger'],
+  },
+  build: {
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          icons: ['lucide-react'],
+        },
+      },
+    },
+  },
+});
+

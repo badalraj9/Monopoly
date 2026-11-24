@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useCallback } from 'react';
 import {
   Landmark,
   X,
@@ -17,7 +17,6 @@ import {
 import {
   LOAN_TIERS,
   type LoanTier,
-  type CreditRating,
   formatINR,
   calculateCreditAssessment,
   getBankLoanState,
@@ -35,14 +34,14 @@ export interface BankModalProps {
   onClose: () => void;
 }
 
-export const BankModal: React.FC<BankModalProps> = ({
+export const BankModal: React.FC<BankModalProps> = React.memo(function BankModal({
   isOpen,
   player,
   netWorth,
   onBorrow,
   onRepayEarly,
   onClose
-}) => {
+}) {
   // Close on Escape key
   useEffect(() => {
     if (!isOpen) return;
@@ -67,6 +66,14 @@ export const BankModal: React.FC<BankModalProps> = ({
     return calculateEarlyPayoff(player);
   }, [player]);
 
+  const handleDialogClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  const handleRepayEarly = useCallback(() => {
+    onRepayEarly(earlyPayoff.payoffAmount);
+  }, [onRepayEarly, earlyPayoff.payoffAmount]);
+
   if (!isOpen || !player) return null;
 
   const playerCash = player.cash || 0;
@@ -74,7 +81,7 @@ export const BankModal: React.FC<BankModalProps> = ({
 
   return (
     <div className="bank-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="bank-dialog-title">
-      <div className="bank-dialog" onClick={(e) => e.stopPropagation()}>
+      <div className="bank-dialog" onClick={handleDialogClick}>
         {/* Editorial Header */}
         <header className="bank-header">
           <div className="bank-crest-area">
@@ -240,7 +247,7 @@ export const BankModal: React.FC<BankModalProps> = ({
                     <button
                       className="primary early-payoff-btn"
                       disabled={!earlyPayoff.canAfford}
-                      onClick={() => onRepayEarly(earlyPayoff.payoffAmount)}
+                      onClick={handleRepayEarly}
                     >
                       <Sparkles size={14} />
                       Repay Early for {formatINR(earlyPayoff.payoffAmount)}
@@ -385,6 +392,6 @@ export const BankModal: React.FC<BankModalProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default BankModal;

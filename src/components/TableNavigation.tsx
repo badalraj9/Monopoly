@@ -48,7 +48,13 @@ export interface TableNavigationProps {
   connectionStatus?: 'connected' | 'reconnecting' | 'error';
 }
 
-export const TableNavigation: React.FC<TableNavigationProps> = ({
+function formatTimer(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+export const TableNavigation: React.FC<TableNavigationProps> = React.memo(function TableNavigation({
   activePlayer,
   totalPlayers,
   onOpenPlayers,
@@ -71,13 +77,7 @@ export const TableNavigation: React.FC<TableNavigationProps> = ({
   onCopyRoom,
   copiedRoom,
   connectionStatus
-}) => {
-  const formatTimer = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  };
-
+}) {
   return (
     <>
       <header className="table-nav-bar">
@@ -238,6 +238,6 @@ export const TableNavigation: React.FC<TableNavigationProps> = ({
       </nav>
     </>
   );
-};
+});
 
 export default TableNavigation;

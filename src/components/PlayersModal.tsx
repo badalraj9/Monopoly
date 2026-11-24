@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, Landmark, Users, Building2, Shield, ShoppingBag, LogOut } from 'lucide-react';
+import React, { useMemo, useCallback } from 'react';
+import { X, Landmark, Users, ShoppingBag, LogOut, Shield } from 'lucide-react';
 import './PlayersModal.css';
 
 export interface PlayerModalData {
@@ -49,7 +49,7 @@ export interface PlayersModalProps {
   money: (amount: number) => string;
 }
 
-export const PlayersModal: React.FC<PlayersModalProps> = ({
+export const PlayersModal: React.FC<PlayersModalProps> = React.memo(function PlayersModal({
   isOpen,
   onClose,
   players,
@@ -63,14 +63,18 @@ export const PlayersModal: React.FC<PlayersModalProps> = ({
   onConfirmLeave,
   netWorth,
   money
-}) => {
-  if (!isOpen) return null;
+}) {
+  const activePlayers = useMemo(() => players.filter(p => p.active), [players]);
 
-  const activePlayers = players.filter(p => p.active);
+  const handleModalClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  if (!isOpen) return null;
 
   return (
     <div className="players-overlay" onClick={onClose} role="dialog" aria-modal="true">
-      <section className="players-modal" onClick={e => e.stopPropagation()}>
+      <section className="players-modal" onClick={handleModalClick}>
         <header className="players-modal-header">
           <div>
             <div className="eyebrow">TABLE ROSTER · STANDINGS</div>
@@ -199,6 +203,6 @@ export const PlayersModal: React.FC<PlayersModalProps> = ({
       </section>
     </div>
   );
-};
+});
 
 export default PlayersModal;

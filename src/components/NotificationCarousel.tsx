@@ -286,7 +286,7 @@ function parseLogToDispatch(
   };
 }
 
-export function NotificationCarousel({
+export const NotificationCarousel = React.memo(function NotificationCarousel({
   logs = [],
   players = [],
   currentTurn = 0,
@@ -354,28 +354,26 @@ export function NotificationCarousel({
     return () => clearFadeTimer();
   }, [clearFadeTimer]);
 
-  if (!dispatches.length) return null;
-
   const currentDispatch = dispatches[currentIndex] || dispatches[0];
 
-  const handlePrev = (e?: React.MouseEvent) => {
+  const handlePrev = useCallback((e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (dispatches.length <= 1) return;
     setCurrentIndex((prev) => (prev > 0 ? prev - 1 : dispatches.length - 1));
     setIsFaded(false);
     startFadeTimer();
-  };
+  }, [dispatches.length, startFadeTimer]);
 
-  const handleNext = (e?: React.MouseEvent) => {
+  const handleNext = useCallback((e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (dispatches.length <= 1) return;
     setCurrentIndex((prev) => (prev < dispatches.length - 1 ? prev + 1 : 0));
     setIsFaded(false);
     startFadeTimer();
-  };
+  }, [dispatches.length, startFadeTimer]);
 
   // Mouse wheel scroll handler
-  const handleWheel = (e: React.WheelEvent) => {
+  const handleWheel = useCallback((e: React.WheelEvent) => {
     if (dispatches.length <= 1) return;
     const now = Date.now();
     if (now - lastScrollTimeRef.current < 160) return;
@@ -389,16 +387,16 @@ export function NotificationCarousel({
       handlePrev();
     }
     lastScrollTimeRef.current = now;
-  };
+  }, [dispatches.length, handleNext, handlePrev]);
 
   // Touch handlers for mobile swipe
-  const handleTouchStart = (e: React.TouchEvent) => {
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartXRef.current = e.touches[0].clientX;
     setIsHovered(true);
     setIsFaded(false);
-  };
+  }, []);
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     if (touchStartXRef.current !== null) {
       const touchEndX = e.changedTouches[0].clientX;
       const diff = touchStartXRef.current - touchEndX;
@@ -415,25 +413,31 @@ export function NotificationCarousel({
       setIsHovered(false);
       startFadeTimer();
     }, 1800);
-  };
+  }, [handleNext, handlePrev, startFadeTimer]);
 
-  const handleDismiss = (e: React.MouseEvent) => {
+  const handleDismiss = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     clearFadeTimer();
     setIsFaded(true);
-  };
+  }, [clearFadeTimer]);
 
-  const handleWakeUp = () => {
+  const handleWakeUp = useCallback(() => {
     setIsFaded(false);
     startFadeTimer();
-  };
+  }, [startFadeTimer]);
 
-  const handleTileClick = (e: React.MouseEvent) => {
-    if (currentDispatch.tileName && onTileSelect) {
+  const handleTileClick = useCallback((e: React.MouseEvent) => {
+    if (currentDispatch?.tileName && onTileSelect) {
       e.stopPropagation();
       onTileSelect(currentDispatch.tileName);
     }
-  };
+  }, [currentDispatch?.tileName, onTileSelect]);
+
+  const handleNavClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  if (!dispatches.length) return null;
 
   return (
     <aside
@@ -490,7 +494,7 @@ export function NotificationCarousel({
 
         {/* Scroll Controls (Prev / Next & Counter) */}
         {dispatches.length > 1 && (
-          <div className="ticker-nav" onClick={(e) => e.stopPropagation()}>
+          <div className="ticker-nav" onClick={handleNavClick}>
             <button
               type="button"
               className="ticker-nav-btn"
@@ -528,6 +532,6 @@ export function NotificationCarousel({
       </div>
     </aside>
   );
-}
+});
 
 export default NotificationCarousel;

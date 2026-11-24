@@ -1,10 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import {
   Sparkles,
-  HelpCircle,
-  Coins,
   Receipt,
-  Scale,
   Building2,
   Lock,
   Crown,
@@ -15,7 +12,6 @@ import {
   X,
   ShieldCheck,
   Landmark,
-  Scroll,
 } from 'lucide-react';
 import './EventNotification.css';
 import { playBuySound, playRentSound, playJailSound } from '../utils/sound';
@@ -60,7 +56,7 @@ function formatINR(val: number): string {
  * Double-line engraved borders, gold foil seals, Playfair Display typography,
  * distressed rubber stamps, and fine intaglio banknote detailing.
  */
-export function EventCardModal({ event, onClose }: EventCardModalProps) {
+export const EventCardModal = React.memo(function EventCardModal({ event, onClose }: EventCardModalProps) {
   useEffect(() => {
     if (!event) return;
 
@@ -92,13 +88,17 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
     };
   }, [event, onClose]);
 
-  if (!event) return null;
-
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleBackdropClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) {
       onClose();
     }
-  };
+  }, [onClose]);
+
+  const handleCardClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  if (!event) return null;
 
   const renderCardContent = () => {
     switch (event.type) {
@@ -106,7 +106,7 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
       case 'chest': {
         const isChance = event.type === 'chance';
         return (
-          <div className="chance-chest-card parchment-certificate" onClick={(e) => e.stopPropagation()}>
+          <div className="chance-chest-card parchment-certificate" onClick={handleCardClick}>
             {/* Engraved Double Border & Corner Ornaments */}
             <div className="parchment-border-frame" />
             <div className="parchment-corner top-left">❖</div>
@@ -180,7 +180,7 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
       case 'tax': {
         const amount = event.amount ?? 0;
         return (
-          <div className="tax-invoice-card parchment-certificate">
+          <div className="tax-invoice-card parchment-certificate" onClick={handleCardClick}>
             <button
               type="button"
               className="modal-corner-close-btn"
@@ -237,7 +237,7 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
       case 'jail': {
         const isVisiting = event.title.toLowerCase().includes('visit');
         return (
-          <div className="jail-card parchment-certificate">
+          <div className="jail-card parchment-certificate" onClick={handleCardClick}>
             <button
               type="button"
               className="modal-corner-close-btn"
@@ -296,7 +296,7 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
 
       case 'club': {
         return (
-          <div className="club-card parchment-certificate">
+          <div className="club-card parchment-certificate" onClick={handleCardClick}>
             <button
               type="button"
               className="modal-corner-close-btn"
@@ -348,7 +348,7 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
       case 'rest': {
         const hasJackpot = event.amount !== undefined && event.amount > 0;
         return (
-          <div className="rest-card parchment-certificate">
+          <div className="rest-card parchment-certificate" onClick={handleCardClick}>
             <button
               type="button"
               className="modal-corner-close-btn"
@@ -402,7 +402,7 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
       case 'start': {
         const salary = event.amount ?? 1500;
         return (
-          <div className="start-card parchment-certificate">
+          <div className="start-card parchment-certificate" onClick={handleCardClick}>
             <button
               type="button"
               className="modal-corner-close-btn"
@@ -452,7 +452,7 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
       case 'buy': {
         const headerColor = event.color || '#1d3326';
         return (
-          <div className="buy-deed-card parchment-certificate">
+          <div className="buy-deed-card parchment-certificate" onClick={handleCardClick}>
             <button
               type="button"
               className="modal-corner-close-btn"
@@ -507,7 +507,7 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
       case 'rent': {
         const amount = event.amount ?? 0;
         return (
-          <div className="rent-card parchment-certificate">
+          <div className="rent-card parchment-certificate" onClick={handleCardClick}>
             <button
               type="button"
               className="modal-corner-close-btn"
@@ -575,13 +575,13 @@ export function EventCardModal({ event, onClose }: EventCardModalProps) {
       <div className="event-modal-container">{renderCardContent()}</div>
     </div>
   );
-}
+});
 
 /**
  * FloatingTransfer
  * Renders elegant vintage banknote certificates that float up and fade out for real-time payment feedback.
  */
-export function FloatingTransfer({ transfers }: FloatingTransferProps) {
+export const FloatingTransfer = React.memo(function FloatingTransfer({ transfers }: FloatingTransferProps) {
   if (!transfers || transfers.length === 0) return null;
 
   return (
@@ -606,7 +606,7 @@ export function FloatingTransfer({ transfers }: FloatingTransferProps) {
       })}
     </div>
   );
-}
+});
 
 export { ImperialGazette } from './ImperialGazette';
 export type { GazetteDispatch, GazetteCategory, ImperialGazetteProps } from './ImperialGazette';

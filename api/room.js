@@ -635,6 +635,73 @@ function clearStuckRoll(room, storage) {
   }
 }
 
+async function checkAndCleanStaleTurn(room, storage) {
+  if (!room || !room.game || room.game.phase === 'GAME_OVER') return false;
+  if (!Array.isArray(room.game.players) || room.game.players.length <= 1) return false;
+
+  const lastActiveTime = room.lastAction?.time || room.lastActive || 0;
+  if (!lastActiveTime) return false;
+
+  // Auto-advance if player turn inactive for > 120 seconds (120,000 ms)
+  if (Date.now() - lastActiveTime > 120000) {
+    const currentTurn = room.game.turn !== undefined ? room.game.turn : (room.activeSeat ?? 0);
+    let nextTurn = (currentTurn + 1) % room.game.players.length;
+    let checked = 0;
+    while (!room.game.players[nextTurn]?.active && checked < room.game.players.length) {
+      nextTurn = (nextTurn + 1) % room.game.players.length;
+      checked++;
+    }
+
+    room.game.turn = nextTurn;
+    room.game.phase = 'WAIT_FOR_ROLL';
+    room.game.rolls = 0;
+    room.activeSeat = nextTurn;
+    room.rollInFlight = false;
+    room.rollStartTime = null;
+    room.lastActive = Date.now();
+    room.lastAction = {
+      action: 'staleTurnAutoAdvance',
+      by: -1,
+      nickname: 'System',
+      skippedSeat: currentTurn,
+      nextSeat: nextTurn,
+      time: Date.now()
+    };
+    room.stateVersion = (room.stateVersion || 0) + 1;
+
+    if (storage && room.code) {
+      const roomCode = room.code.toUpperCase();
+      const roomKey = `${KEY_PREFIX}${roomCode}`;
+      const verKey = `${VER_PREFIX}${roomCode}`;
+      const newVersion = room.stateVersion;
+      try {
+        const payload = JSON.stringify({
+          code: roomCode,
+          seats: (room.seats || []).map(s => ({
+            token: s.token,
+            name: s.name,
+            index: s.index
+          })),
+          activeSeat: room.activeSeat ?? 0,
+          game: room.game ?? null,
+          rollInFlight: Boolean(room.rollInFlight),
+          rollStartTime: room.rollStartTime || null,
+          rollId: room.rollId || 0,
+          stateVersion: newVersion,
+          lastAction: room.lastAction || null,
+          lastActive: room.lastActive || Date.now()
+        });
+        await storage.set(roomKey, payload, 'EX', ROOM_TTL_SECONDS);
+        await storage.set(verKey, String(newVersion), 'EX', ROOM_TTL_SECONDS);
+      } catch (err) {
+        console.warn(`[Storage] Failed to persist stale turn auto-advance for ${roomCode}:`, err?.message || err);
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 function sanitizeGame(game) {
   if (!game || typeof game !== 'object') return game;
   if (Array.isArray(game.players)) {
@@ -762,6 +829,7 @@ async function getRoomFromStorage(code, req) {
 
   if (room) {
     clearStuckRoll(room, storage);
+    await checkAndCleanStaleTurn(room, storage);
   }
 
   return room;
@@ -805,6 +873,8 @@ function setCorsHeaders(res) {
 function sendJson(res, statusCode, data) {
   setCorsHeaders(res);
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
   if (typeof res.status === 'function') {
     return res.status(statusCode).json(data);
   }
@@ -897,29 +967,6 @@ export default async function handler(req, res) {
     const storage = getStorage(req);
     const sinceParam = query.since;
     const hasSince = sinceParam !== undefined && sinceParam !== null && sinceParam !== '';
-
-    // Fast Redis Hygiene: Cheap since check without fetching or parsing heavy room JSON payload
-    if (hasSince) {
-      try {
-        const verKey = `${VER_PREFIX}${code}`;
-        const cachedVer = await storage.get(verKey);
-        if (cachedVer !== null && cachedVer !== undefined) {
-          const currentVer = parseInt(cachedVer, 10);
-          const sinceNum = parseInt(sinceParam, 10);
-          if (!isNaN(sinceNum) && !isNaN(currentVer) && sinceNum === currentVer) {
-            // Refresh TTL on active polling
-            storage.expire(verKey, ROOM_TTL_SECONDS).catch(() => {});
-            storage.expire(`${KEY_PREFIX}${code}`, ROOM_TTL_SECONDS).catch(() => {});
-            return sendJson(res, 200, {
-              unchanged: true,
-              stateVersion: currentVer
-            });
-          }
-        }
-      } catch (err) {
-        console.warn(`[Storage] Cheap since check warning for ${code}:`, err?.message || err);
-      }
-    }
 
     const room = await getRoomFromStorage(code, req);
     if (!room) {
