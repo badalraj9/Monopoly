@@ -320,3 +320,111 @@
     animation: pulse-badge 1.8s infinite;
   }
 }
+
+/* Room Code & Connection Status in Navigation */
+.nav-room-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fdfaf3;
+  border: 1px solid #dcd7c9;
+  border-radius: 20px;
+  padding: 3px 6px 3px 8px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+}
+
+.nav-room-tag {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  color: #7b887f;
+  font-weight: 600;
+}
+
+.nav-room-code {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #1b2e22;
+}
+
+.nav-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 12px;
+  border: 1px solid #31443a;
+  background: #31443a;
+  color: #fff;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.nav-copy-btn:hover {
+  background: #1e2e25;
+}
+
+.nav-copy-btn.copied {
+  background: #2e6040;
+  border-color: #2e6040;
+  color: #fff;
+}
+
+.nav-connection-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 16px;
+  background: #fdfaf3;
+  border: 1px solid #dcd7c9;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+}
+
+.dot-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.status-connected .dot-indicator {
+  background: #4caf50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.25);
+}
+
+.status-reconnecting .dot-indicator {
+  background: #e6a23c;
+  box-shadow: 0 0 0 0 rgba(230, 162, 60, 0.7);
+  animation: pulseDotAmber 1.4s infinite ease-in-out;
+}
+
+.status-error .dot-indicator {
+  background: #e53935;
+  box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.25);
+}
+
+@keyframes pulseDotAmber {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(230, 162, 60, 0.7); }
+  70% { transform: scale(1.2); box-shadow: 0 0 0 5px rgba(230, 162, 60, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(230, 162, 60, 0); }
+}
+
+@media (max-width: 820px) {
+  .nav-connection-dot .dot-label {
+    display: none;
+  }
+  .nav-connection-dot {
+    padding: 6px;
+  }
+  .nav-room-pill {
+    padding: 2px 4px 2px 6px;
+    gap: 4px;
+    font-size: 10px;
+  }
+}
+

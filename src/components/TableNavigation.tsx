@@ -9,7 +9,9 @@ import {
   Volume2,
   VolumeX,
   Home,
-  ChevronDown
+  ChevronDown,
+  Copy,
+  Check
 } from 'lucide-react';
 import './TableNavigation.css';
 
@@ -40,6 +42,10 @@ export interface TableNavigationProps {
   onToggleMute: () => void;
   timerSeconds: number;
   money: (amount: number) => string;
+  roomCode?: string;
+  onCopyRoom?: () => void;
+  copiedRoom?: boolean;
+  connectionStatus?: 'connected' | 'reconnecting' | 'error';
 }
 
 export const TableNavigation: React.FC<TableNavigationProps> = ({
@@ -60,7 +66,11 @@ export const TableNavigation: React.FC<TableNavigationProps> = ({
   muted,
   onToggleMute,
   timerSeconds,
-  money
+  money,
+  roomCode,
+  onCopyRoom,
+  copiedRoom,
+  connectionStatus
 }) => {
   const formatTimer = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -131,6 +141,36 @@ export const TableNavigation: React.FC<TableNavigationProps> = ({
         </div>
 
         <div className="nav-group-right">
+          {roomCode && (
+            <div className="nav-room-pill" title="Click to copy room invite link">
+              <span className="nav-room-tag">ROOM</span>
+              <b className="nav-room-code">{roomCode}</b>
+              <button
+                type="button"
+                className={`nav-copy-btn ${copiedRoom ? 'copied' : ''}`}
+                onClick={onCopyRoom}
+                aria-label="Copy room invite link"
+              >
+                {copiedRoom ? <Check size={11} /> : <Copy size={11} />}
+                <span>{copiedRoom ? 'Copied!' : 'Copy'}</span>
+              </button>
+            </div>
+          )}
+
+          {connectionStatus && (
+            <div
+              className={`nav-connection-dot status-${connectionStatus}`}
+              title={`Connection: ${connectionStatus}`}
+              role="status"
+              aria-label={`Connection status: ${connectionStatus}`}
+            >
+              <span className="dot-indicator" />
+              <span className="dot-label">
+                {connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'reconnecting' ? 'Reconnecting...' : 'Offline'}
+              </span>
+            </div>
+          )}
+
           <button
             className="nav-control-btn speed-btn"
             onClick={onToggleSpeed}
