@@ -14,23 +14,41 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 // ==========================================
 
 // --- Upstash REST Client (Stateless HTTP Fetch, Ideal for Serverless) ---
+function cleanToken(token) {
+  if (!token) return '';
+  let t = String(token).trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+    t = t.slice(1, -1).trim();
+  }
+  if (t.toLowerCase().startsWith('bearer ')) {
+    t = t.slice(7).trim();
+  }
+  return t;
+}
+
 class UpstashRestClient {
   constructor(urlStr, token) {
-    this.url = urlStr.replace(/\/+$/, '');
-    this.token = token || '';
+    this.url = String(urlStr || '').trim().replace(/\/+$/, '');
+    this.token = cleanToken(token);
   }
 
   async _fetch(command, ...args) {
+    if (!this.token) {
+      throw new Error('Upstash REST token is missing. Please set UPSTASH_REDIS_REST_TOKEN.');
+    }
     const res = await fetch(this.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {})
+        Authorization: `Bearer ${this.token}`
       },
       body: JSON.stringify([command, ...args]),
       signal: AbortSignal.timeout(5000)
     });
-    if (!res.ok) throw new Error(`Upstash HTTP ${res.status}: ${res.statusText}`);
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      throw new Error(`Upstash HTTP ${res.status}: ${res.statusText} ${errBody}`.trim());
+    }
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     return data.result;
@@ -321,11 +339,32 @@ class InMemoryClient {
 // ==========================================
 let storageClient = null;
 
-function getStorage() {
+function getStorage(req) {
+  // Check headers passed from frontend in-game settings
+  if (req && req.headers) {
+    const headerUrl = req.headers['x-upstash-url'];
+    const headerToken = req.headers['x-upstash-token'];
+    if (headerUrl && headerToken) {
+      return new UpstashRestClient(headerUrl, headerToken);
+    }
+  }
+
   if (storageClient) return storageClient;
 
-  let upstashUrl = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
-  let upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || process.env.REDIS_TOKEN || '';
+  let upstashUrl = 
+    process.env.UPSTASH_REDIS_REST_URL || 
+    process.env.UPSTASH_REST_URL || 
+    process.env.KV_REST_API_URL || 
+    process.env.REDIS_REST_URL || 
+    '';
+  let upstashToken = 
+    process.env.UPSTASH_REDIS_REST_TOKEN || 
+    process.env.UPSTASH_REST_TOKEN || 
+    process.env.KV_REST_API_TOKEN || 
+    process.env.REDIS_TOKEN || 
+    process.env.REDIS_REST_TOKEN || 
+    process.env.UPSTASH_TOKEN || 
+    '';
   const genericRedisUrl = process.env.REDIS_URL || process.env.REDIS_URI || process.env.KV_URL || '';
 
   // Check if REDIS_URL is an HTTP/HTTPS REST endpoint
@@ -347,8 +386,15 @@ function getStorage() {
     } catch {}
   }
 
+  // If URL is set, ensure token is present; otherwise warn and use memory fallback
   if (upstashUrl) {
-    storageClient = new UpstashRestClient(upstashUrl, upstashToken);
+    const cleaned = cleanToken(upstashToken);
+    if (!cleaned) {
+      console.warn('[Storage] UPSTASH_REDIS_REST_URL is configured, but UPSTASH_REDIS_REST_TOKEN is missing or empty. Please set UPSTASH_REDIS_REST_TOKEN in Vercel and redeploy.');
+      storageClient = new InMemoryClient();
+      return storageClient;
+    }
+    storageClient = new UpstashRestClient(upstashUrl, cleaned);
     return storageClient;
   }
 
@@ -366,9 +412,9 @@ function getStorage() {
 }
 
 // --- High-level Room Operations ---
-async function saveRoomToStorage(room) {
+async function saveRoomToStorage(room, req) {
   if (!room || !room.code) return;
-  const storage = getStorage();
+  const storage = getStorage(req);
   const roomKey = `${KEY_PREFIX}${room.code.toUpperCase()}`;
 
   const payload = JSON.stringify({
@@ -407,11 +453,11 @@ async function saveRoomToStorage(room) {
   }
 }
 
-async function getRoomFromStorage(code) {
+async function getRoomFromStorage(code, req) {
   if (!code) return null;
   const roomCode = String(code).toUpperCase().trim();
   const roomKey = `${KEY_PREFIX}${roomCode}`;
-  const storage = getStorage();
+  const storage = getStorage(req);
 
   try {
     const raw = await storage.get(roomKey);
@@ -432,9 +478,12 @@ async function getRoomFromStorage(code) {
   return null;
 }
 
-async function getRoomCodeByTokenFromStorage(token) {
+  return null;
+}
+
+async function getRoomCodeByTokenFromStorage(token, req) {
   if (!token) return null;
-  const storage = getStorage();
+  const storage = getStorage(req);
   try {
     const code = await storage.get(`${TOKEN_PREFIX}${token}`);
     if (code) return String(code).toUpperCase();
@@ -543,7 +592,7 @@ export default async function handler(req, res) {
       return sendJson(res, 400, { error: 'Room code is required.' });
     }
 
-    const room = await getRoomFromStorage(code);
+    const room = await getRoomFromStorage(code, req);
     if (!room) {
       return sendJson(res, 404, { error: 'Room not found.' });
     }
@@ -589,7 +638,7 @@ export default async function handler(req, res) {
       do {
         code = generateRoomCode();
         attempts++;
-      } while (attempts < 10 && (await getRoomFromStorage(code)));
+      } while (attempts < 10 && (await getRoomFromStorage(code, req)));
 
       const token = randomUUID();
       const hostName = String(body.nickname || body.name || 'Player 1').trim().slice(0, 24) || 'Player 1';
@@ -611,7 +660,7 @@ export default async function handler(req, res) {
         lastActive: Date.now()
       };
 
-      await saveRoomToStorage(room);
+      await saveRoomToStorage(room, req);
 
       const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
       return sendJson(res, 200, {
@@ -632,7 +681,7 @@ export default async function handler(req, res) {
         return sendJson(res, 400, { error: 'Room code is required.' });
       }
 
-      const room = await getRoomFromStorage(code);
+      const room = await getRoomFromStorage(code, req);
       if (!room) {
         return sendJson(res, 404, { error: 'Room not found.' });
       }
@@ -677,7 +726,7 @@ export default async function handler(req, res) {
         time: Date.now()
       };
 
-      await saveRoomToStorage(room);
+      await saveRoomToStorage(room, req);
 
       const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
       return sendJson(res, 200, {
@@ -700,14 +749,14 @@ export default async function handler(req, res) {
 
       let code = String(body.code || query.code || '').trim().toUpperCase();
       if (!code) {
-        code = await getRoomCodeByTokenFromStorage(token);
+        code = await getRoomCodeByTokenFromStorage(token, req);
       }
 
       if (!code) {
         return sendJson(res, 404, { error: 'Room session not found for this token.' });
       }
 
-      const room = await getRoomFromStorage(code);
+      const room = await getRoomFromStorage(code, req);
       if (!room) {
         return sendJson(res, 404, { error: 'Room not found.' });
       }
@@ -718,7 +767,7 @@ export default async function handler(req, res) {
       }
 
       room.lastActive = Date.now();
-      await saveRoomToStorage(room);
+      await saveRoomToStorage(room, req);
 
       const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
       return sendJson(res, 200, {
@@ -744,7 +793,7 @@ export default async function handler(req, res) {
         return sendJson(res, 400, { error: 'Room code and player token are required.' });
       }
 
-      const room = await getRoomFromStorage(code);
+      const room = await getRoomFromStorage(code, req);
       if (!room) {
         return sendJson(res, 404, { error: 'Room not found.' });
       }
@@ -811,7 +860,7 @@ export default async function handler(req, res) {
       room.stateVersion = (room.stateVersion || 0) + 1;
       room.lastActive = Date.now();
 
-      await saveRoomToStorage(room);
+      await saveRoomToStorage(room, req);
 
       const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
       return sendJson(res, 200, {
