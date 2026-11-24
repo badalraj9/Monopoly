@@ -584,7 +584,7 @@ function checkActionAuthorization(room, seat, clientAction, body) {
   const activeTurn = room.game?.turn !== undefined ? room.game.turn : (room.activeSeat ?? 0);
 
   // 1. Turn actions: verify caller seat matches activeSeat
-  if (TURN_ACTIONS.includes(clientAction)) {
+  if (TURN_ACTIONS.includes(clientAction) || (clientAction === 'gameState' && room.game?.players?.length)) {
     if (seat.index !== activeTurn) {
       return { authorized: false, status: 403, error: 'Not your turn to act.' };
     }
@@ -1307,6 +1307,9 @@ export default async function handler(req, res) {
         const consecutiveDoubles = d1 === d2 ? ((room.game?.rolls || 0) + 1) : 0;
         room.rollInFlight = false;
         room.rollStartTime = null;
+        if (body.state && typeof body.state === 'object') {
+          room.game = body.state;
+        }
         room.lastAction = {
           action: 'dice',
           by: seat.index,
