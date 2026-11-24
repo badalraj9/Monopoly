@@ -1,0 +1,1000 @@
+/* Imperial Reserve Bank Modal Styling - Business India Edition Heritage Theme */
+
+.bank-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(18, 30, 24, 0.78);
+  backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow-y: auto;
+  animation: bank-overlay-fade 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.bank-dialog {
+  width: min(840px, 98vw);
+  max-height: min(92dvh, 880px);
+  background: #faf7f2;
+  border: 1px solid #435448;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(18, 32, 24, 0.32), 0 6px 20px rgba(18, 32, 24, 0.14);
+  position: relative;
+  animation: bank-dialog-arrive 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Brass ornamental perimeter line */
+.bank-dialog::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px solid rgba(201, 162, 39, 0.28);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Modal Header */
+.bank-header {
+  padding: 20px 26px 17px;
+  background: linear-gradient(135deg, #f4efe5 0%, #faf7f2 100%);
+  border-bottom: 1px solid #dcd7ca;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  position: relative;
+}
+
+.bank-crest-area {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.bank-crest {
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid #31443a;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #c9a227;
+  background: #283930;
+  box-shadow: 0 2px 8px rgba(40, 57, 48, 0.25), inset 0 0 0 1px rgba(201, 162, 39, 0.4);
+  flex-shrink: 0;
+}
+
+.bank-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bank-eyebrow {
+  font-family: 'DM Mono', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  color: #7b887e;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.bank-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(22px, 2.5vw, 29px);
+  font-weight: 700;
+  color: #222b28;
+  margin: 0;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.bank-subtitle {
+  font-size: 11.5px;
+  color: #617066;
+  margin: 3px 0 0;
+  line-height: 1.4;
+}
+
+.bank-close-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #cfcbbe;
+  background: #fbf9f4;
+  color: #556358;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  flex-shrink: 0;
+}
+
+.bank-close-btn:hover {
+  background: #31443a;
+  color: #faf7f2;
+  border-color: #31443a;
+  transform: rotate(90deg);
+}
+
+/* Modal Body */
+.bank-body {
+  padding: 22px 26px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: #faf7f2;
+  flex: 1;
+}
+
+/* Custom themed scrollbars */
+.bank-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.bank-body::-webkit-scrollbar-track {
+  background: #f3efe6;
+}
+
+.bank-body::-webkit-scrollbar-thumb {
+  background: #c7c2b5;
+  border-radius: 3px;
+}
+
+.bank-body::-webkit-scrollbar-thumb:hover {
+  background: #a8a294;
+}
+
+/* Credit Assessment & Capacity Card */
+.credit-dossier-card {
+  background: #f6f2e9;
+  border: 1px solid #d8d3c5;
+  border-radius: 4px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 2px 8px rgba(35, 48, 41, 0.05);
+  position: relative;
+}
+
+.credit-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.credit-badge-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.credit-rating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: 'DM Mono', monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Rating Specific Tones */
+.rating-aaa {
+  background: #e8f5ec;
+  color: #1a5632;
+  border: 1px solid #6cb584;
+}
+
+.rating-a {
+  background: #eaf1f8;
+  color: #1d4677;
+  border: 1px solid #6d96c4;
+}
+
+.rating-bbb {
+  background: #f9f2e3;
+  color: #8c5b1b;
+  border: 1px solid #d4a559;
+}
+
+.rating-subprime {
+  background: #fbeeed;
+  color: #9c2e2e;
+  border: 1px solid #d66c6c;
+}
+
+.credit-standing-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4a594f;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.credit-score-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.stat-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  color: #7b867e;
+  letter-spacing: 0.1em;
+}
+
+.stat-score-value {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: #556259;
+}
+
+.stat-score-value b {
+  font-size: 15px;
+  font-weight: 700;
+  color: #222b28;
+}
+
+/* Credit Meter Bar */
+.credit-meter {
+  height: 6px;
+  width: 100%;
+  background: #e5dfd2;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.credit-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.credit-meter-fill.rating-aaa {
+  background: linear-gradient(90deg, #3d8f58, #1a5632);
+}
+
+.credit-meter-fill.rating-a {
+  background: linear-gradient(90deg, #4477aa, #1d4677);
+}
+
+.credit-meter-fill.rating-bbb {
+  background: linear-gradient(90deg, #d4a559, #8c5b1b);
+}
+
+.credit-meter-fill.rating-subprime {
+  background: linear-gradient(90deg, #d66c6c, #9c2e2e);
+}
+
+.credit-summary-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #56645a;
+  margin: 0 0 16px;
+}
+
+/* Financial Ledger Grid */
+.bank-ledger-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.ledger-cell {
+  background: #fbf9f4;
+  border: 1px solid #dfdacd;
+  border-radius: 3px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ledger-cell.highlight {
+  background: #f4efe4;
+  border-color: #c9a227;
+  box-shadow: inset 0 0 0 1px rgba(201, 162, 39, 0.25);
+}
+
+.ledger-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  color: #727e75;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ledger-value {
+  font-family: 'DM Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: #2b3630;
+  margin: 2px 0;
+}
+
+.capacity-value {
+  font-size: 16px;
+  color: #274b35;
+}
+
+.ledger-caption {
+  font-size: 8.5px;
+  color: #849086;
+  line-height: 1.25;
+}
+
+/* Active Loan Commitment Card */
+.active-loan-card {
+  background: linear-gradient(135deg, #fdfbf7 0%, #f6f0e2 100%);
+  border: 1.5px solid #c9a227;
+  border-radius: 4px;
+  padding: 18px 20px;
+  box-shadow: 0 4px 16px rgba(201, 162, 39, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.active-loan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e7ddc8;
+  padding-bottom: 12px;
+}
+
+.active-loan-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.active-loan-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'DM Mono', monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: #8c5b1b;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.active-loan-header h3 {
+  font-family: 'Playfair Display', serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: #232c28;
+  margin: 0;
+}
+
+.active-loan-amount-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.active-loan-amount-badge span {
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  color: #7d6b46;
+}
+
+.active-loan-amount-badge b {
+  font-family: 'DM Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  color: #9e2a2b;
+}
+
+.active-loan-details {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.active-loan-schedule {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  background: #fcf9f2;
+  border: 1px solid #e8e2d4;
+  border-radius: 3px;
+  padding: 10px 14px;
+}
+
+.schedule-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.schedule-item span {
+  font-size: 9.5px;
+  color: #7b857d;
+}
+
+.schedule-item b {
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  color: #2c3831;
+}
+
+/* Repayment lap progress */
+.loan-lap-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  color: #6a766c;
+}
+
+.progress-track {
+  height: 6px;
+  width: 100%;
+  background: #e3dccc;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: #31443a;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+/* Early Payoff Callout */
+.early-payoff-box {
+  background: #fbf7ee;
+  border: 1px solid #dccca8;
+  border-radius: 3px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.early-payoff-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.payoff-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  color: #a87920;
+  letter-spacing: 0.1em;
+}
+
+.early-payoff-info h4 {
+  font-family: 'Playfair Display', serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: #2a3630;
+  margin: 0;
+}
+
+.early-payoff-info p {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #556258;
+  margin: 0;
+}
+
+.savings-highlight {
+  font-family: 'DM Mono', monospace;
+  font-weight: 700;
+  color: #1a5632;
+  background: #e8f5ec;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.early-payoff-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.early-payoff-btn {
+  background: #31443a;
+  color: #faf7f2;
+  border: 1px solid #23342b;
+  padding: 10px 16px;
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.early-payoff-btn:hover:not(:disabled) {
+  background: #1c2b23;
+  box-shadow: 0 4px 12px rgba(28, 43, 35, 0.25);
+  transform: translateY(-1px);
+}
+
+.early-payoff-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.insufficient-cash-warning {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'DM Mono', monospace;
+  font-size: 8.5px;
+  color: #9c2e2e;
+}
+
+/* Tiered Loan Offerings Section */
+.loan-offerings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  border-bottom: 1px solid #dfdacd;
+  padding-bottom: 8px;
+}
+
+.section-eyebrow {
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: #828e85;
+  text-transform: uppercase;
+}
+
+.section-heading {
+  font-family: 'Playfair Display', serif;
+  font-size: 19px;
+  font-weight: 700;
+  color: #232c28;
+  margin: 2px 0 0;
+}
+
+.section-meta-note {
+  font-family: 'DM Mono', monospace;
+  font-size: 8.5px;
+  color: #7b877e;
+}
+
+/* Loan Tiers Grid */
+.loan-tiers-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.loan-tier-card {
+  background: #fcfbf8;
+  border: 1px solid #d8d3c5;
+  border-radius: 4px;
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.loan-tier-card.tier-eligible:hover {
+  border-color: #31443a;
+  box-shadow: 0 6px 18px rgba(35, 48, 41, 0.08);
+  transform: translateY(-2px);
+}
+
+.loan-tier-card.tier-locked {
+  background: #f7f4ee;
+  border-color: #e2ded5;
+  opacity: 0.72;
+}
+
+.loan-tier-card.tier-active {
+  border-color: #c9a227;
+  background: #fcf9f2;
+  box-shadow: 0 0 0 1px #c9a227;
+}
+
+.tier-header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tier-badge-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.tier-badge {
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #617066;
+  text-transform: uppercase;
+}
+
+.tier-apr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #f1ebd9;
+  border: 1px solid #dccca8;
+  font-family: 'DM Mono', monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: #7d5918;
+}
+
+.tier-name {
+  font-family: 'Playfair Display', serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #232c28;
+  margin: 0;
+}
+
+.tier-tagline {
+  font-size: 10px;
+  line-height: 1.35;
+  color: #6a776e;
+  margin: 0;
+  min-height: 28px;
+}
+
+.tier-amount-block {
+  background: #f4efe4;
+  border: 1px solid #dfdacd;
+  border-radius: 3px;
+  padding: 10px 12px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tier-principal-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 7.5px;
+  letter-spacing: 0.12em;
+  color: #7b887e;
+}
+
+.tier-principal {
+  font-family: 'DM Mono', monospace;
+  font-size: 23px;
+  font-weight: 700;
+  color: #24352b;
+  letter-spacing: -0.01em;
+}
+
+.tier-terms-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid #eae5d9;
+  border-bottom: 1px solid #eae5d9;
+  padding: 9px 0;
+  font-size: 10px;
+}
+
+.term-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #5c6860;
+}
+
+.term-row b {
+  font-family: 'DM Mono', monospace;
+  color: #25332b;
+  font-weight: 600;
+}
+
+.interest-row {
+  color: #7a867c;
+}
+
+.interest-amt {
+  font-family: 'DM Mono', monospace;
+  font-weight: 700;
+  color: #8c5b1b;
+}
+
+.tier-use-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 9px;
+  line-height: 1.4;
+  color: #6b776f;
+  background: #f8f5ed;
+  border: 1px solid #e7e2d6;
+  border-radius: 2px;
+  padding: 6px 8px;
+}
+
+.tier-use-tip svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #88968c;
+}
+
+.tier-action-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.draw-loan-btn {
+  width: 100%;
+  background: #31443a;
+  color: #faf7f2;
+  border: 1px solid #23342b;
+  padding: 9px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.draw-loan-btn:hover:not(:disabled) {
+  background: #1c2b23;
+  box-shadow: 0 4px 12px rgba(28, 43, 35, 0.2);
+  transform: translateY(-1px);
+}
+
+.draw-loan-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.tier-ineligible-reason {
+  font-size: 8.5px;
+  line-height: 1.35;
+  color: #9c4343;
+  text-align: center;
+  display: block;
+}
+
+.tier-active-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  background: #eef5ef;
+  border: 1px solid #94c5a0;
+  border-radius: 2px;
+  font-family: 'DM Mono', monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #205c33;
+}
+
+/* Regulatory Footer Strip */
+.bank-regulatory-strip {
+  background: #f4efe5;
+  border: 1px solid #ded8cb;
+  border-radius: 3px;
+  padding: 11px 14px;
+}
+
+.regulatory-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: #606d64;
+}
+
+.reg-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #31443a;
+}
+
+.regulatory-text strong {
+  color: #2a352f;
+  font-weight: 600;
+}
+
+/* Modal Bottom Actions Bar */
+.bank-modal-actions {
+  padding: 14px 26px;
+  background: #f6f2e8;
+  border-top: 1px solid #dcd7ca;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bank-footnote {
+  font-family: 'DM Mono', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  color: #838e85;
+}
+
+.bank-done-btn {
+  background: transparent;
+  border: 1px solid #31443a;
+  color: #31443a;
+  padding: 8px 18px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.bank-done-btn:hover {
+  background: #31443a;
+  color: #faf7f2;
+  box-shadow: 0 2px 8px rgba(49, 68, 58, 0.2);
+}
+
+/* Keyframes */
+@keyframes bank-overlay-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes bank-dialog-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Responsive Media Queries */
+@media (max-width: 820px) {
+  .bank-ledger-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .loan-tiers-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .loan-tier-card {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .tier-header {
+    grid-column: 1 / -1;
+  }
+
+  .tier-use-tip {
+    grid-column: 1 / -1;
+  }
+
+  .tier-action-footer {
+    grid-column: 1 / -1;
+  }
+
+  .early-payoff-box {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .early-payoff-action {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .early-payoff-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 580px) {
+  .bank-header {
+    padding: 14px 16px;
+  }
+
+  .bank-body {
+    padding: 14px 16px;
+    gap: 14px;
+  }
+
+  .bank-modal-actions {
+    padding: 10px 16px;
+    flex-direction: column;
+    gap: 10px;
+    align-items: stretch;
+  }
+
+  .bank-done-btn {
+    width: 100%;
+    text-align: center;
+  }
+
+  .bank-ledger-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .active-loan-schedule {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .loan-tier-card {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .bank-title {
+    font-size: 20px;
+  }
+}

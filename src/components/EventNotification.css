@@ -1,0 +1,1227 @@
+/* ==========================================================================
+   Business India Edition - EventNotification & Imperial Gazette Styles
+   Regal Colonial / Indian Deed & Vintage Parchment Certificate Aesthetics
+   Double-line engraved borders, gold foil seals, Playfair Display typography,
+   distressed rubber stamps, and fine intaglio banknote detailing.
+   ========================================================================== */
+
+:root {
+  --parchment-bg: #fcf9f2;
+  --parchment-patina: #f5eedc;
+  --parchment-dark: #eee3cb;
+  --ink-primary: #1c2b20;
+  --ink-secondary: #3d4f42;
+  --ink-muted: #5e7264;
+  --gold-foil-start: #ffeaa7;
+  --gold-foil-mid: #d4af37;
+  --gold-foil-deep: #8c6a18;
+  --gold-border: #c9a227;
+  --deed-border: #7c5828;
+  --crimson-stamp: #991b1b;
+  --emerald-stamp: #166534;
+  --navy-stamp: #1e3a8a;
+  --spring-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ==========================================================================
+   1. Event Card Modal Backdrop & Outer Framing
+   ========================================================================== */
+
+.event-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99990;
+  background: rgba(14, 24, 18, 0.76);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: backdropFadeIn 0.35s var(--spring-ease) forwards;
+}
+
+@keyframes backdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.event-modal-container {
+  position: relative;
+  max-width: 450px;
+  width: 100%;
+  animation: modalUnfurl 0.45s var(--spring-ease) forwards;
+}
+
+@keyframes modalUnfurl {
+  0% {
+    transform: scale(0.85) translateY(28px);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Close icon button in corner */
+.modal-corner-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(44, 34, 22, 0.08);
+  border: 1px solid rgba(124, 88, 40, 0.25);
+  color: #4a3822;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  z-index: 20;
+}
+
+.modal-corner-close-btn:hover {
+  background: rgba(44, 34, 22, 0.16);
+  color: #1a1209;
+  transform: rotate(90deg);
+}
+
+/* ==========================================================================
+   2. 3D Card Flip Structure (Chance & Community Chest)
+   ========================================================================== */
+
+.event-card-3d-wrapper {
+  perspective: 1400px;
+  width: 100%;
+  cursor: pointer;
+  user-select: none;
+}
+
+.event-card-inner {
+  position: relative;
+  width: 100%;
+  min-height: 500px;
+  transform-style: preserve-3d;
+  transition: transform 0.8s var(--spring-ease);
+  border-radius: 8px;
+}
+
+.event-card-inner.is-flipped {
+  transform: rotateY(180deg);
+}
+
+.event-card-face {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 
+    0 24px 48px rgba(10, 20, 14, 0.45),
+    0 4px 12px rgba(10, 20, 14, 0.2),
+    0 0 0 1px rgba(201, 162, 39, 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   Card Face: BACK (Antique Leather Folio Cover)
+   -------------------------------------------------------------------------- */
+
+.vintage-leather-back {
+  background: radial-gradient(circle at 50% 30%, #203426, #111e15);
+  border: 3px double #c9a227;
+  color: #f7ecd2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 24px;
+  text-align: center;
+  position: relative;
+}
+
+.vintage-leather-back::before {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* Corner engraved brass tabs */
+.card-engraved-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 2px solid #c9a227;
+  pointer-events: none;
+}
+.card-engraved-corner.top-left { top: 8px; left: 8px; border-right: none; border-bottom: none; }
+.card-engraved-corner.top-right { top: 8px; right: 8px; border-left: none; border-bottom: none; }
+.card-engraved-corner.bottom-left { bottom: 8px; left: 8px; border-right: none; border-top: none; }
+.card-engraved-corner.bottom-right { bottom: 8px; right: 8px; border-left: none; border-top: none; }
+
+.gold-foil-seal {
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--gold-foil-start) 0%, var(--gold-foil-mid) 50%, var(--gold-foil-deep) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 
+    0 0 28px rgba(212, 175, 55, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.7);
+  margin-bottom: 20px;
+  color: #1a291f;
+  border: 2px solid #fdf5c4;
+  animation: pulseGold 3s infinite ease-in-out;
+}
+
+@keyframes pulseGold {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 24px rgba(212, 175, 55, 0.45);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 38px rgba(212, 175, 55, 0.8);
+  }
+}
+
+.card-back-pretitle {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #dfbe65;
+  margin-bottom: 6px;
+}
+
+.card-back-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #faeed0;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  margin-bottom: 6px;
+}
+
+.card-back-motto {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-size: 13px;
+  color: #c4af82;
+  letter-spacing: 1px;
+}
+
+.card-back-hint {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: rgba(245, 238, 220, 0.6);
+  margin-top: 28px;
+}
+
+/* --------------------------------------------------------------------------
+   Card Face: FRONT (Authentic Parchment Certificate)
+   -------------------------------------------------------------------------- */
+
+.parchment-certificate {
+  background: 
+    radial-gradient(circle at 50% 20%, #fefcf8 0%, #f8f3e5 65%, #eee3cb 100%);
+  border: 3px double #7c5828;
+  color: var(--ink-primary);
+  padding: 24px 22px;
+  position: relative;
+  border-radius: 8px;
+  box-shadow: 
+    0 24px 48px rgba(10, 20, 14, 0.4),
+    inset 0 0 20px rgba(124, 88, 40, 0.08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.chance-chest-card {
+  width: 100%;
+  min-height: 410px;
+  gap: 14px;
+}
+
+/* Inner Engraved Double Border Frame */
+.parchment-border-frame {
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(124, 88, 40, 0.35);
+  pointer-events: none;
+}
+
+.parchment-corner {
+  position: absolute;
+  font-size: 12px;
+  color: #8c6a2d;
+  line-height: 1;
+  pointer-events: none;
+}
+.parchment-corner.top-left { top: 9px; left: 9px; }
+.parchment-corner.top-right { top: 9px; right: 9px; }
+.parchment-corner.bottom-left { bottom: 9px; left: 9px; }
+.parchment-corner.bottom-right { bottom: 9px; right: 9px; }
+
+/* Certificate Authority Header */
+.card-certificate-header {
+  text-align: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px double rgba(124, 88, 40, 0.3);
+}
+
+.certificate-authority {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: #7c5828;
+  margin-bottom: 4px;
+}
+
+.certificate-type-banner {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #1a2a1f;
+}
+
+/* Gold / Wax Embossed Center Seal */
+.gold-embossed-seal {
+  position: relative;
+  width: 66px;
+  height: 66px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.seal-coined-edge {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px dashed #b88a26;
+  opacity: 0.8;
+  animation: sealRotate 40s linear infinite;
+}
+
+@keyframes sealRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.seal-center {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--gold-foil-start) 0%, var(--gold-foil-mid) 60%, var(--gold-foil-deep) 100%);
+  color: #192a1e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 
+    0 4px 14px rgba(184, 138, 38, 0.45),
+    inset 0 1px 3px rgba(255, 255, 255, 0.75);
+  border: 1.5px solid #fff5c8;
+}
+
+/* Parchment Main Titles & Decrees */
+.parchment-main-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+  color: #1b281f;
+  line-height: 1.35;
+  margin-bottom: 10px;
+  letter-spacing: 0.5px;
+}
+
+.parchment-proclamation {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #3b4e42;
+  text-align: center;
+  margin-bottom: 14px;
+  padding: 0 10px;
+}
+
+/* Intaglio Banknote Financial Callout */
+.intaglio-financial-box {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px double #8c6a2d;
+  border-radius: 6px;
+  padding: 10px 18px;
+  margin: 0 auto 14px;
+  text-align: center;
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.05);
+  max-width: 320px;
+  width: 100%;
+}
+
+.intaglio-label {
+  display: block;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #7c5828;
+  margin-bottom: 2px;
+}
+
+.intaglio-amount {
+  font-family: 'DM Mono', monospace;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.intaglio-amount.credit {
+  color: #14532d;
+}
+
+.intaglio-amount.debit {
+  color: #991b1b;
+}
+
+.parchment-parties-notice {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #556b5d;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.dot-sep {
+  margin: 0 6px;
+  color: #8c6a2d;
+}
+
+/* ==========================================================================
+   3. Distressed Vintage Rubber Stamps
+   ========================================================================== */
+
+.vintage-rubber-stamp {
+  position: absolute;
+  top: 65px;
+  right: 18px;
+  padding: 5px 14px;
+  border: 2px solid;
+  border-radius: 4px;
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  pointer-events: none;
+  opacity: 0.88;
+  animation: stampSlam 0.45s var(--spring-ease) 0.1s both;
+  transform: rotate(-10deg);
+}
+
+@keyframes stampSlam {
+  0% {
+    transform: scale(2.2) rotate(-22deg);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(0.95) rotate(-9deg);
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(1) rotate(-11deg);
+    opacity: 0.88;
+  }
+}
+
+.vintage-rubber-stamp.approved {
+  border-color: #15803d;
+  color: #15803d;
+  background: rgba(240, 253, 244, 0.45);
+}
+
+.vintage-rubber-stamp.red-tax-stamp {
+  border-color: #b91c1c;
+  color: #b91c1c;
+  background: rgba(254, 242, 242, 0.45);
+}
+
+.vintage-rubber-stamp.green-stamp {
+  border-color: #15803d;
+  color: #15803d;
+  background: rgba(240, 253, 244, 0.45);
+}
+
+.vintage-rubber-stamp.navy-stamp {
+  border-color: #1e3a8a;
+  color: #1e3a8a;
+  background: rgba(239, 246, 255, 0.45);
+}
+
+.vintage-rubber-stamp.gold-stamp {
+  border-color: #b45309;
+  color: #b45309;
+  background: rgba(254, 243, 199, 0.45);
+}
+
+/* ==========================================================================
+   4. Regal Action Buttons (Embossed Leather & Brass)
+   ========================================================================== */
+
+.regal-action-btn {
+  width: 100%;
+  padding: 12px 20px;
+  border-radius: 6px;
+  border: 1px solid #c9a227;
+  background: linear-gradient(180deg, #283e30 0%, #15241b 100%);
+  color: #f7eed2;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-shadow: 
+    0 4px 14px rgba(18, 34, 24, 0.35),
+    inset 0 1px 1px rgba(255, 255, 255, 0.18);
+  transition: all 0.2s var(--spring-ease);
+}
+
+.regal-action-btn:hover {
+  background: linear-gradient(180deg, #324e3c 0%, #1b2d22 100%);
+  border-color: #e5bd47;
+  color: #fff9e6;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(18, 34, 24, 0.45);
+}
+
+.regal-action-btn:active {
+  transform: translateY(1px);
+}
+
+/* ==========================================================================
+   5. Modal Variants: Tax, Jail, Buy Deed, Rent
+   ========================================================================== */
+
+/* Property Buy Deed */
+.buy-deed-card {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.buy-deed-header {
+  padding: 16px 20px;
+  text-align: center;
+  color: #ffffff;
+  border-bottom: 2px solid #7c5828;
+  box-shadow: inset 0 -2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.buy-deed-pretitle {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  opacity: 0.9;
+  margin-bottom: 2px;
+}
+
+.buy-deed-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.buy-deed-body {
+  padding: 22px 20px 20px;
+  text-align: center;
+}
+
+/* Tax Table */
+.tax-invoice-header {
+  text-align: center;
+  margin-bottom: 14px;
+}
+
+.tax-invoice-no {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: #7c5828;
+  margin-top: 4px;
+}
+
+.tax-details-table {
+  width: 100%;
+  margin-bottom: 14px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+}
+
+.tax-details-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px dotted rgba(124, 88, 40, 0.3);
+}
+
+.tax-label {
+  color: #556b5d;
+}
+
+.tax-value {
+  font-weight: 600;
+  color: #1c2b20;
+}
+
+/* Jail Modal */
+.jail-court-emblem {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle, #fde8e8 0%, #fca5a5 60%, #dc2626 100%);
+  color: #7f1d1d;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
+  border: 2px solid #fff;
+}
+
+.jail-conditions-box {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(124, 88, 40, 0.25);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  color: #4b5d51;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+
+/* Rent Flow Box */
+.rent-flow-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px double #8c6a2d;
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin: 0 auto 12px;
+  max-width: 320px;
+}
+
+.rent-flow-party {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a2a1f;
+}
+
+.rent-flow-arrow {
+  color: #991b1b;
+  display: flex;
+}
+
+/* ==========================================================================
+   6. Floating Banknote Transfers (Ivory & Gold Banknotes)
+   ========================================================================== */
+
+.floating-transfers-host {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 99999;
+  overflow: hidden;
+}
+
+.floating-transfer-chip {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-family: 'DM Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: #fdfbf7;
+  box-shadow: 
+    0 12px 28px rgba(10, 20, 14, 0.3),
+    0 2px 6px rgba(10, 20, 14, 0.1);
+  animation: banknoteFloat 2.6s var(--spring-ease) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes banknoteFloat {
+  0% {
+    transform: translate(-50%, 0) scale(0.8);
+    opacity: 0;
+  }
+  15% {
+    transform: translate(-50%, -10px) scale(1.04);
+    opacity: 1;
+  }
+  30% {
+    transform: translate(-50%, -20px) scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: translate(-50%, -55px) scale(0.97);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(-50%, -85px) scale(0.9);
+    opacity: 0;
+  }
+}
+
+.floating-transfer-chip.gain {
+  border: 1.5px solid #2e7d32;
+  color: #1b5e20;
+}
+
+.floating-transfer-chip.loss {
+  border: 1.5px solid #c62828;
+  color: #b71c1c;
+}
+
+.floating-chip-seal {
+  font-size: 11px;
+  color: #c9a227;
+}
+
+/* ==========================================================================
+   7. The Imperial Gazette / Chronicle of India (Left Column)
+   ========================================================================== */
+
+.imperial-gazette-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #f7f3e8;
+  border-right: 2px solid #b8ab94;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset -4px 0 12px rgba(35, 27, 16, 0.05);
+}
+
+/* Masthead Header */
+.gazette-masthead {
+  padding: 14px 14px 8px;
+  background: linear-gradient(180deg, #fbf7ee 0%, #f4ede0 100%);
+  border-bottom: 1px solid #d4c7b2;
+  flex-shrink: 0;
+}
+
+.masthead-top-sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #7c5828;
+  text-transform: uppercase;
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.masthead-dot {
+  margin: 0 4px;
+  color: #c9a227;
+}
+
+.masthead-main-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.masthead-brand-crest {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fde08b, #c9a227);
+  color: #1a2a1f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+.masthead-title-wrap {
+  flex: 1;
+  text-align: center;
+}
+
+.gazette-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #17241c;
+  line-height: 1.15;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.gazette-tagline {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-size: 10px;
+  color: #635340;
+  margin: 2px 0 0;
+}
+
+.gazette-collapse-btn {
+  background: none;
+  border: 1px solid #c8bcab;
+  border-radius: 4px;
+  color: #556b5d;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.gazette-collapse-btn:hover {
+  background: #ede4d3;
+  color: #17241c;
+}
+
+.masthead-edition-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: 'DM Mono', monospace;
+  font-size: 9.5px;
+  color: #6e5c46;
+  padding: 4px 0 2px;
+}
+
+.live-pulse-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #15803d;
+  font-weight: 700;
+}
+
+.live-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #16a34a;
+  animation: pulseDot 2s infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(0.85); }
+}
+
+/* Ornate Engraved Rule */
+.gazette-engraved-rule {
+  position: relative;
+  text-align: center;
+  margin: 6px 0 8px;
+  border-bottom: 1px solid #c9a227;
+}
+
+.rule-flourish {
+  position: relative;
+  top: 7px;
+  background: #fbf7ee;
+  padding: 0 6px;
+  font-size: 10px;
+  color: #8c6a2d;
+}
+
+/* Category Filter Tabs */
+.gazette-filters-nav {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.gazette-filters-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.gazette-filter-tab {
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid #cfc2ad;
+  background: #ede6d6;
+  color: #594935;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.gazette-filter-tab:hover {
+  background: #dfd5c1;
+  color: #17241c;
+}
+
+.gazette-filter-tab.active {
+  background: #233729;
+  border-color: #233729;
+  color: #faeed0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+/* Feed Scroll Container */
+.gazette-feed-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #b8ab94 #ede5d4;
+}
+
+.gazette-feed-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+.gazette-feed-scroll::-webkit-scrollbar-track {
+  background: #ede5d4;
+}
+.gazette-feed-scroll::-webkit-scrollbar-thumb {
+  background: #b8ab94;
+  border-radius: 3px;
+}
+
+/* Gazette Empty State */
+.gazette-empty-state {
+  text-align: center;
+  padding: 36px 16px;
+  color: #7c6853;
+}
+
+.gazette-empty-icon {
+  margin: 0 auto 12px;
+  color: #a8947c;
+}
+
+.gazette-empty-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: #3b2c1d;
+  margin-bottom: 6px;
+}
+
+.gazette-empty-sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Dispatch Article Card */
+.gazette-card {
+  position: relative;
+  background: #fcf9f2;
+  border: 1px solid #d5c8b4;
+  border-radius: 4px;
+  padding: 10px 12px;
+  box-shadow: 0 1px 4px rgba(28, 22, 14, 0.06);
+  transition: all 0.2s var(--spring-ease);
+  cursor: pointer;
+  overflow: hidden;
+  animation: gazetteSlideIn 0.4s var(--spring-ease) both;
+}
+
+@keyframes gazetteSlideIn {
+  from {
+    transform: translateX(-16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.gazette-card:hover {
+  background: #ffffff;
+  border-color: #bfae95;
+  box-shadow: 0 3px 10px rgba(28, 22, 14, 0.1);
+  transform: translateY(-1px);
+}
+
+.gazette-card.is-latest {
+  border-left: 3px solid #c9a227;
+  background: #fffdf9;
+}
+
+/* Vintage Stamp in Card Corner */
+.gazette-stamp {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid;
+  opacity: 0.85;
+  transform: rotate(-6deg);
+  pointer-events: none;
+}
+
+.gazette-stamp.gold {
+  border-color: #b45309;
+  color: #b45309;
+  background: rgba(254, 243, 199, 0.4);
+}
+
+.gazette-stamp.crimson {
+  border-color: #b91c1c;
+  color: #b91c1c;
+  background: rgba(254, 242, 242, 0.4);
+}
+
+.gazette-stamp.emerald {
+  border-color: #15803d;
+  color: #15803d;
+  background: rgba(240, 253, 244, 0.4);
+}
+
+.gazette-stamp.navy {
+  border-color: #1e40af;
+  color: #1e40af;
+  background: rgba(239, 246, 255, 0.4);
+}
+
+.gazette-stamp.sepia {
+  border-color: #78350f;
+  color: #78350f;
+  background: rgba(254, 247, 237, 0.4);
+}
+
+/* Card Metadata Row */
+.gazette-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.gazette-category-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #7c5828;
+}
+
+.gazette-timestamp {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  color: #8c7b68;
+}
+
+/* Headline */
+.gazette-card-headline {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #1a2a1f;
+  margin: 0 0 5px;
+  padding-right: 50px;
+}
+
+/* Narrative Body */
+.gazette-card-body {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #495a4e;
+  margin: 0 0 7px;
+}
+
+/* Financial Consideration Box in Gazette Card */
+.gazette-financial-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(44, 34, 22, 0.04);
+  border: 1px dotted rgba(124, 88, 40, 0.3);
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+}
+
+.financial-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #7c5828;
+}
+
+.financial-amount {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.financial-amount.gain {
+  color: #15803d;
+}
+
+.financial-amount.loss {
+  color: #b91c1c;
+}
+
+/* Card Footer */
+.gazette-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  color: #7c6c59;
+  padding-top: 4px;
+  border-top: 1px solid rgba(200, 185, 165, 0.3);
+}
+
+.gazette-player-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+
+.gazette-player-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.gazette-inspect-hint {
+  font-style: italic;
+  font-size: 9.5px;
+  color: #8c7355;
+}
+
+/* Collapsed Gazette Spine */
+.imperial-gazette-spine {
+  width: 36px;
+  height: 100%;
+  background: #eee5d4;
+  border-right: 2px solid #b8ab94;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.imperial-gazette-spine:hover {
+  background: #e5dac6;
+}
+
+.gazette-spine-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.gazette-spine-icon {
+  color: #4a3b2b;
+}
+
+.gazette-spine-title {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #3b2c1d;
+  text-transform: uppercase;
+}
+
+.gazette-spine-counter {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1a2a1f;
+  background: #fdf5d6;
+  border: 1px solid #c9a227;
+  border-radius: 10px;
+  padding: 2px 5px;
+}
+
+.gazette-spine-chevron {
+  color: #7c6853;
+}
