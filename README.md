@@ -46,14 +46,14 @@ The game is designed for zero-maintenance serverless multiplayer using **Vercel 
 ## High-Performance Multiplayer Architecture
 
 ### 1. Optimistic Concurrency Control (OCC) & Atomic CAS
-- Every state mutation includes an `expectedVersion` parameter.
+- The REST client includes an `expectedVersion` with each state mutation.
 - The server validates version monotonicity and commits updates atomically via Redis Lua scripts (`storage.cas`).
-- Competing simultaneous actions (e.g. concurrent auction bids) automatically produce one winner (`HTTP 200`) and cleanly reject stale actions with `HTTP 409` (`VERSION_CONFLICT`), preventing lost updates and race conditions.
+- On `HTTP 409` (`VERSION_CONFLICT`), the client fetches the full board and recalculates the requested action if it still applies.
 
 ### 2. Redis Hygiene & Cheap Polling
 - Fast `since` checks poll a lightweight string key (`monopoly:ver:<CODE>`) instead of fetching and parsing heavy JSON room payloads.
-- If the client's version matches, the endpoint immediately returns `{ unchanged: true, stateVersion }` in ~2ms.
-- 24-hour TTL (`86400s`) automatically refreshes on all room, version, and player token keys on every activity.
+- When the version matches and no recovery is due, the endpoint returns `{ unchanged: true, stateVersion }` after one Redis read.
+- Successful room writes renew the 24-hour TTL on the room, version, and player token keys.
 
 ### 3. Server-Side Security & Authoritative Logic
 - **Seat Authorization**: Turn-bound actions (`roll`, `endTurn`, `buy`, `liquidate`) verify that the request token matches `room.activeSeat`. Unauthorized actions return `HTTP 403`.
@@ -64,7 +64,7 @@ The game is designed for zero-maintenance serverless multiplayer using **Vercel 
 ### 4. Stuck-State Recovery
 - **Stuck Roll Invalidation**: Any roll in flight older than 5,000ms is automatically cleared upon the next room access.
 - **Inactive Player Skip**: If an active player remains idle for 45+ seconds, any seated player can call `skipInactive` to advance the turn.
-- **Host Resilience**: If the host disconnects or leaves, seat 0 authority is seamlessly promoted to the next active player, preventing orphaned matches.
+- **Host Resilience**: If the host leaves, the next remaining player takes over. In a live match, players keep their original seat numbers.
 
 ---
 

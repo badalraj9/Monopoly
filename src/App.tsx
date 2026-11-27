@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { removePlayerFromGame } from './utils/playerDeparture.js';
+import { submitRoomAction } from './utils/roomSync';
 import boardBackdrop from '../bg-asset.webp';
 import {
   ArrowRight,
@@ -127,6 +129,20 @@ type Game = {
   trades: TradeOffer[];
 };
 
+type RoomSession = { code: string; token: string };
+type RoomSnapshot = {
+  code: string;
+  token?: string;
+  seat?: number;
+  hostSeat?: number;
+  activeSeat: number;
+  stateVersion: number;
+  players: { name: string; index: number; online: boolean }[];
+  game: Game | null;
+  lastAction?: { action: string; by: number; time: number; dice?: number[] } | null;
+};
+type RestRoom = RoomSnapshot & RoomSession & { seat: number };
+
 const defaults: Features = {
   upgrades: true,
   mortgages: true,
@@ -200,6 +216,8 @@ function reducer(s: Game, a: any): Game {
     const offer = a.offer as TradeOffer;
     if (
       offer.from === offer.to ||
+      !s.players[offer.from]?.active ||
+      !s.players[offer.to]?.active ||
       s.players[offer.from]?.cash < offer.giveCash ||
       s.players[offer.to]?.cash < offer.wantCash ||
       offer.giveProps.some(id => !s.players[offer.from].owned.includes(id)) ||
@@ -319,17 +337,18 @@ function reducer(s: Game, a: any): Game {
         mover.pos = 10;
         rolls = 0;
       } else if (mover.jail >= 3) {
-        mover.cash -= 500;
-        mover.jail = 0;
-        if (mover.cash < 0)
+        if (mover.cash < 500)
           return {
             ...s,
             players,
             dice: [x, y],
+            rolls: 0,
             phase: 'DEBT_RESOLUTION',
-            pending: { type: 'debt', owed: 500, bail: true },
+            pending: { type: 'debt', owed: 500, bail: true, afterBailDice: [x, y] },
             message: 'Raise ₹500 for Jail bail.'
           };
+        mover.cash -= 500;
+        mover.jail = 0;
       } else {
         mover.jail++;
         return {
@@ -455,7 +474,7 @@ function reducer(s: Game, a: any): Game {
         return {
           ...s,
           phase: 'RESOLVE_TILE',
-          pending: s.features.auctions ? { type: 'buy', tile: tile.id } : undefined,
+          pending: { type: 'buy', tile: tile.id },
           message: `${tile.name} is unowned. Buy it for ${money(tile.price || 0)}?`
         };
       }
@@ -566,6 +585,7 @@ function reducer(s: Game, a: any): Game {
       return {
         ...s,
         phase: 'END_TURN',
+        rolls: 0,
         players: s.players.map((q, i) => (i === s.turn ? { ...q, pos: 10, jail: 1 } : q)),
         message: 'Go directly to Jail.',
         log: log(`${p.name} was sent to Jail.`)
@@ -759,6 +779,7 @@ function reducer(s: Game, a: any): Game {
       ...s,
       players,
       phase: isLeap ? 'RESOLVE_TILE' : 'END_TURN',
+      rolls: c.action === 'jail' ? 0 : s.rolls,
       pending: undefined,
       rentMultiplier: c.action === 'nearestTransport' || c.action === 'nearestUtility' ? 2 : 1,
       message: c.text
@@ -864,15 +885,17 @@ function reducer(s: Game, a: any): Game {
       total = p.cash + principal,
       owed = s.pending?.owed || 0,
       paid = !!owed && total >= owed;
-    return {
+    const bail = paid && s.pending?.bail;
+    const fundedState: Game = {
       ...s,
-      phase: owed && !paid ? 'DEBT_RESOLUTION' : 'END_TURN',
+      phase: owed && !paid ? 'DEBT_RESOLUTION' : bail ? 'WAIT_FOR_ROLL' : 'END_TURN',
       pending: owed && !paid ? s.pending : undefined,
       players: s.players.map((q, i) =>
         i === s.turn
           ? {
               ...q,
               cash: total - (paid ? owed : 0),
+              jail: bail ? 0 : q.jail,
               loan: true,
               loanLaps: 0,
               loanTier: tier?.id || 'syndicate',
@@ -886,6 +909,7 @@ function reducer(s: Game, a: any): Game {
       message: paid ? `${money(principal)} Bank loan received and ${money(owed)} debt cleared.` : `${money(principal)} Bank loan facility credited.`,
       log: log(`${p.name} borrowed ${money(principal)} from the Imperial Bank${paid ? ` and cleared debt of ${money(owed)}` : ''}.`)
     };
+    return bail && s.pending?.afterBailDice ? reducer(fundedState, { type: 'DICE', dice: s.pending.afterBailDice }) : fundedState;
   }
   if (a.type === 'LOAN_REPAY') {
     const actor = Number.isInteger(a.actor) ? a.actor : s.turn,
@@ -1002,44 +1026,7 @@ function reducer(s: Game, a: any): Game {
       winner: live.length <= 1 ? live[0]?.name : undefined
     };
   }
-  if (a.type === 'LEAVE_PLAYER') {
-    const target = a.player as number,
-      departing = s.players[target];
-    if (!departing?.active) return s;
-    const creditor = target === s.turn ? s.pending?.to : undefined,
-      players = s.players.map((q, i) =>
-        i === target
-          ? { ...q, active: false, cash: 0, owned: [], buildings: {}, mortgaged: [], jailCard: 0 }
-          : i === creditor && creditor !== undefined
-          ? {
-              ...q,
-              cash: q.cash + Math.max(0, departing.cash),
-              owned: [...q.owned, ...departing.owned],
-              buildings: { ...q.buildings, ...departing.buildings },
-              mortgaged: [...new Set([...q.mortgaged, ...departing.mortgaged])],
-              jailCard: q.jailCard + departing.jailCard
-            }
-          : q
-      ),
-      live = players.filter(q => q.active);
-    let next = s.turn;
-    if (target === s.turn && live.length > 0) {
-      do {
-        next = (next + 1) % players.length;
-      } while (!players[next].active);
-    }
-    const winner = live.length === 1 ? live[0].name : undefined;
-    return {
-      ...s,
-      players,
-      turn: next,
-      phase: winner ? 'GAME_OVER' : target === s.turn ? 'WAIT_FOR_ROLL' : s.phase,
-      pending: target === s.turn ? undefined : s.pending,
-      message: winner ? `${winner} wins the game.` : `${departing.name} left the game.`,
-      winner,
-      log: log(`${departing.name} left the game; remaining assets returned to the Bank.`)
-    };
-  }
+  if (a.type === 'LEAVE_PLAYER') return removePlayerFromGame(s, a.player);
   if (a.type === 'BANKRUPT') {
     const to = s.pending?.to;
     let buildingCash = 0;
@@ -1083,6 +1070,61 @@ function reducer(s: Game, a: any): Game {
   }
   if (a.type === 'TICK') return s.phase === 'MOVING' ? { ...s, phase: 'RESOLVE_TILE' } : s;
   return patch({});
+}
+
+function sameTurn(current: Game, viewed: Game, seat: number) {
+  return current.turn === seat && viewed.turn === seat &&
+    current.phase === viewed.phase && current.rolls === viewed.rolls &&
+    current.players[seat]?.pos === viewed.players[seat]?.pos &&
+    current.players[seat]?.jail === viewed.players[seat]?.jail &&
+    current.players[seat]?.lapsCompleted === viewed.players[seat]?.lapsCompleted &&
+    String(current.dice) === String(viewed.dice) &&
+    JSON.stringify(current.pending) === JSON.stringify(viewed.pending);
+}
+
+function buildGameUpdate(room: RestRoom, viewed: Game, action: any) {
+  const { game, seat } = room;
+  const host = room.hostSeat ?? 0;
+  const send = (state: Game, actionType: string) => ({ action: actionType, state, nextSeat: state.turn });
+  if (action.type === 'START') {
+    const sameRoster = action.roster.length === room.players.length &&
+      action.roster.every((name: string, index: number) => name === room.players[index]?.name);
+    if (game || seat !== host || !sameRoster) return;
+    return send(reducer(blank(), action), 'gameState');
+  }
+  if (!game || seat < 0 || game.phase === 'GAME_OVER') return;
+
+  let actionType = 'gameState';
+  if (['TRADE_OFFER', 'TRADE_ACCEPT', 'TRADE_REJECT'].includes(action.type)) {
+    if (!game.players[seat]?.active) return;
+    if (action.type === 'TRADE_OFFER') {
+      if (action.offer.from !== seat || game.trades.some(trade => trade.id === action.offer.id)) return;
+      actionType = 'tradeState';
+    } else {
+      const trade = game.trades.find(offer => offer.id === action.id);
+      if (trade?.to !== seat && (action.type !== 'TRADE_REJECT' || trade?.from !== seat)) return;
+      actionType = 'tradeState';
+    }
+  } else if (action.type === 'LIQUIDATE' || action.type === 'LOAN_REPAY' || action.type === 'SPEED') {
+    if (!game.players[seat]?.active || (action.type !== 'SPEED' && action.actor !== seat)) return;
+    if (action.type === 'LOAN_REPAY' && getBankLoanState(game.players[seat]).earlyPayoffAmount !== action.amount) return;
+    if (action.type === 'SPEED' && game.speed === action.speed) return;
+    actionType = seat === game.turn ? 'gameState' : 'manageState';
+  } else if (['AUCTION_BID', 'AUCTION_TICK'].includes(action.type) || (action.type === 'PASS' && viewed.phase === 'AUCTION')) {
+    const auction = game.auction;
+    const previous = viewed.auction;
+    if (game.phase !== 'AUCTION' || !auction || !previous ||
+        auction.tile !== previous.tile || auction.turn !== previous.turn ||
+        auction.highestBid !== previous.highestBid || auction.highestPlayer !== previous.highestPlayer ||
+        (action.type === 'AUCTION_TICK' ? seat !== host || auction.seconds !== previous.seconds : seat !== auction.turn)) return;
+    actionType = action.type === 'AUCTION_TICK' ? 'auctionTick' : 'auctionBid';
+  } else if (!sameTurn(game, viewed, seat)) {
+    return;
+  }
+
+  const next = reducer(game, action);
+  if (next === game) return;
+  return send(next, next.turn !== game.turn && actionType === 'gameState' ? 'endTurn' : actionType);
 }
 
 // TileIcon memoized with React.memo
@@ -1189,6 +1231,7 @@ interface GameClockProps {
   message: string;
   playersLength: number;
   canAct: boolean;
+  lastActionAt?: number;
   playerName?: string;
   onTimedEnd: () => void;
   onSkipInactive: () => void;
@@ -1203,6 +1246,7 @@ const GameClock = React.memo(function GameClock({
   message,
   playersLength,
   canAct,
+  lastActionAt,
   playerName,
   onTimedEnd,
   onSkipInactive
@@ -1212,9 +1256,9 @@ const GameClock = React.memo(function GameClock({
   const lastTurnActionTime = useRef(Date.now());
 
   useEffect(() => {
-    lastTurnActionTime.current = Date.now();
-    setInactiveElapsed(0);
-  }, [turn, phase, rolls, message]);
+    lastTurnActionTime.current = lastActionAt ?? Date.now();
+    setInactiveElapsed(Math.max(0, Math.floor((Date.now() - lastTurnActionTime.current) / 1000)));
+  }, [turn, phase, rolls, message, lastActionAt]);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -1260,7 +1304,7 @@ const GameClock = React.memo(function GameClock({
 });
 
 export default function App() {
-  const [game, dispatch] = useReducer(reducer, undefined, initialGame);
+  const [game, dispatchLocal] = useReducer(reducer, undefined, initialGame);
   const [setup, setSetup] = useState(false);
   const [count, setCount] = useState(4);
   const [names, setNames] = useState(['Player 1', 'Player 2', 'Player 3', 'Player 4', 'Player 5', 'Player 6']);
@@ -1367,11 +1411,14 @@ export default function App() {
   const roomSeatRef = useRef(-1);
   const roomRef = useRef<any>(null);
   const lastStateVersion = useRef(0);
-  const lastProcessedActionTime = useRef(0);
+  const restRoomRef = useRef<RestRoom | null>(null);
+  const restActionQueue = useRef(Promise.resolve());
+  const restConnectionAttempt = useRef(0);
   const autoResumeStarted = useRef(false);
   const reconnectTimer = useRef<number | undefined>(undefined);
   const reconnectAttempts = useRef(0);
   const pollTimerRef = useRef<number | null>(null);
+  const pollRoomRef = useRef<() => void>(() => {});
   const pollFailuresRef = useRef(0);
   const isPollingInFlight = useRef(false);
   const gameRef = useRef(game);
@@ -1418,69 +1465,57 @@ export default function App() {
     return isLiveAction ? 1000 : 2500;
   }, []);
 
-  const applyRoomData = useCallback((data: any) => {
-    if (!data || data.error) {
-      if (data?.error && data?.code !== 'VERSION_CONFLICT') setRoomError(data.error);
-      return;
+  const getRestSession = useCallback((): RoomSession | null => {
+    const code = localStorage.getItem('business-room-code');
+    const token = code && localStorage.getItem('business-player-token:' + code);
+    return code && token ? { code, token } : null;
+  }, []);
+
+  const isCurrentSession = useCallback((session: RoomSession) => {
+    const current = getRestSession();
+    return current?.code === session.code && current.token === session.token;
+  }, [getRestSession]);
+
+  const applyRoomData = useCallback((data: RoomSnapshot, session: RoomSession) => {
+    if (!isCurrentSession(session) || data.code !== session.code) return;
+    const previous = restRoomRef.current;
+    const sameSession = previous?.code === session.code && previous.token === session.token;
+    if (sameSession && data.stateVersion < previous.stateVersion) return;
+
+    const seat = data.seat ?? (sameSession ? previous.seat : -1);
+    const incomingGame = data.game?.players?.length ? reducer(blank(), { type: 'LOAD', game: data.game }) : null;
+    const gameChanged = !sameSession || JSON.stringify(previous.game) !== JSON.stringify(incomingGame);
+    const next = { ...data, ...session, seat, game: gameChanged ? incomingGame : previous.game };
+    restRoomRef.current = next;
+    setRoom(next);
+    roomSeatRef.current = seat;
+    setRoomSeat(seat);
+    if (!sameSession) setRoomLink(`${location.origin}/join/${data.code}`);
+
+    if (!next.game && (!sameSession || JSON.stringify(previous.players) !== JSON.stringify(data.players))) {
+      setCount(Math.max(2, data.players.length));
+      setNames(data.players.map(player => player.name).concat(['Player 5', 'Player 6']).slice(0, 6));
     }
-    reconnectAttempts.current = 0;
+    if (next.game && (!sameSession || !previous.game)) {
+      setHomeView(false);
+      setSetup(false);
+      setFeatures(next.game.features);
+    }
+    if (gameChanged) dispatchLocal({ type: 'LOAD', game: next.game ?? blank() });
     if (pollFailuresRef.current > 0) {
       pollFailuresRef.current = 0;
       setIsReconnecting(false);
     }
-    if (data.token && data.code) {
-      localStorage.setItem(`business-player-token:${data.code}`, data.token);
-      localStorage.setItem('business-room-code', data.code);
-    }
-    if (Number.isInteger(data.seat)) {
-      setRoomSeat(data.seat);
-      roomSeatRef.current = data.seat;
-    }
-    if (data.code) {
-      setRoomLink(data.invite || `${location.origin}/join/${data.code}`);
-    }
-    setRoom((old: any) => ({
-      ...old,
-      code: data.code || old?.code,
-      players: data.players || old?.players || [],
-      activeSeat: data.activeSeat ?? old?.activeSeat ?? 0,
-      stateVersion: data.stateVersion ?? old?.stateVersion ?? 0,
-      game: data.game || old?.game || null
-    }));
-    const my = data.players?.find((x: any) => x.index === roomSeatRef.current) || data.players?.find((x: any) => x.index === data.seat);
-    if (my) {
-      setRoomSeat(my.index);
-      roomSeatRef.current = my.index;
-    }
-    if (data.players?.length) {
-      setCount(Math.max(2, data.players.length));
-      setNames(data.players.map((x: any) => x.name).concat(['Player 5', 'Player 6']).slice(0, 6));
-    }
-    if (data.game?.players?.length) {
-      setHomeView(false);
-      setSetup(false);
-      const currentGame = gameRef.current;
-      const isMyTurnMoving = roomSeatRef.current >= 0 && roomSeatRef.current === currentGame.turn && currentGame.phase === 'MOVING';
-      if (!isMyTurnMoving) {
-        if (!currentGame.players.length || JSON.stringify(currentGame) !== JSON.stringify(data.game)) {
-          remoteRef.current = true;
-          dispatch({ type: 'LOAD', game: data.game });
-        }
-      }
-    }
-  }, []);
+  }, [isCurrentSession]);
 
   const cleanRoomStorage = useCallback(() => {
-    const code = roomRef.current?.code || localStorage.getItem('business-room-code');
+    const code = localStorage.getItem('business-room-code');
+    restConnectionAttempt.current += 1;
+    restRoomRef.current = null;
+    restActionQueue.current = Promise.resolve();
     localStorage.removeItem('business-room-code');
     if (code) {
       localStorage.removeItem(`business-player-token:${code}`);
-    }
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith('business-player-token:')) {
-        localStorage.removeItem(k);
-      }
     }
   }, []);
 
@@ -1490,17 +1525,18 @@ export default function App() {
       pollTimerRef.current = null;
     }
     if (socketRef.current) {
-      try {
-        socketRef.current.close();
-      } catch {}
+      const socket = socketRef.current;
       socketRef.current = null;
+      try {
+        socket.close();
+      } catch {}
     }
     cleanRoomStorage();
     setRoom(null);
     setRoomSeat(-1);
     setRoomLink('');
     setRollPending(false);
-    dispatch({ type: 'LOAD', game: blank() });
+    dispatchLocal({ type: 'LOAD', game: blank() });
     const message = msg || 'The host has ended the match and closed the room.';
     setRoomError(message);
     setConnectionState(message);
@@ -1508,213 +1544,185 @@ export default function App() {
     setHomeView(true);
   }, [cleanRoomStorage, addTransfer]);
 
-  const scheduleNextPoll = useCallback((customDelay?: number) => {
+  const scheduleNextPoll = useCallback(() => {
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
-    if (typeof document !== 'undefined' && document.hidden) return;
-    const code = roomRef.current?.code || localStorage.getItem('business-room-code');
-    if (!code) return;
-    if (socketRef.current?.readyState === WebSocket.OPEN) return;
-    const baseDelay = getAdaptiveInterval();
-    let delay = customDelay !== undefined ? customDelay : baseDelay;
-    if (customDelay === undefined && pollFailuresRef.current > 0) {
-      delay = Math.min(30000, Math.round(baseDelay * Math.pow(1.5, Math.min(pollFailuresRef.current, 8))));
-    }
-    delay = Math.max(1000, delay);
-    pollTimerRef.current = window.setTimeout(() => {
-      pollRoom();
-    }, delay);
-  }, [getAdaptiveInterval]);
+    if (document.hidden || !getRestSession() || socketRef.current?.readyState === WebSocket.OPEN) return;
+    const base = getAdaptiveInterval();
+    const delay = Math.min(30000, Math.round(base * 1.5 ** Math.min(pollFailuresRef.current, 8)));
+    pollTimerRef.current = window.setTimeout(() => pollRoomRef.current(), delay);
+  }, [getAdaptiveInterval, getRestSession]);
 
-  const pollRoom = useCallback(async (): Promise<any> => {
-    if (typeof document !== 'undefined' && document.hidden) return;
-    const code = roomRef.current?.code || localStorage.getItem('business-room-code');
-    if (!code) return;
-    if (socketRef.current?.readyState === WebSocket.OPEN) return;
-    if (isPollingInFlight.current) return;
+  const readRoomSnapshot = useCallback(async (session: RoomSession, conditional: boolean) => {
+    const url = new URL(resolveApiUrl(), location.href);
+    url.searchParams.set('code', session.code);
+    const previous = restRoomRef.current;
+    if (conditional && previous?.code === session.code && previous.token === session.token) {
+      url.searchParams.set('since', String(previous.stateVersion));
+    }
+    const res = await fetch(url, { headers: { ...getApiHeaders(), Authorization: `Bearer ${session.token}` } });
+    if (!isCurrentSession(session)) return;
+    const data = await res.json().catch(() => ({}));
+    if (!isCurrentSession(session)) return;
+    if (res.status === 404) {
+      handleRemoteRoomClosed(data.error);
+      return;
+    }
+    if (!res.ok) throw new Error(data.error || `Room sync failed (${res.status}).`);
+    if (!data.unchanged) applyRoomData(data, session);
+  }, [resolveApiUrl, getApiHeaders, isCurrentSession, handleRemoteRoomClosed, applyRoomData]);
+
+  const pollRoom = useCallback(async () => {
+    if (document.hidden || socketRef.current?.readyState === WebSocket.OPEN || isPollingInFlight.current) return;
+    const session = getRestSession();
+    if (!session) return;
     isPollingInFlight.current = true;
-    const currentVer = lastStateVersion.current;
     try {
-      const res = await fetch(`${resolveApiUrl()}?code=${encodeURIComponent(code)}&since=${currentVer}`, { headers: getApiHeaders() });
-      if (res.status === 404) {
-        const errData = await res.json().catch(() => ({}));
-        handleRemoteRoomClosed(errData?.error || 'The host has ended the match and closed the room.');
-        return;
-      }
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        if (errData?.closed || (typeof errData?.error === 'string' && errData.error.toLowerCase().includes('closed'))) {
-          handleRemoteRoomClosed(errData?.error || 'The host has ended the match and closed the room.');
-          return;
-        }
-        throw new Error(`Poll HTTP ${res.status}`);
-      }
-      if (pollFailuresRef.current > 0) {
+      await readRoomSnapshot(session, true);
+      if (isCurrentSession(session) && pollFailuresRef.current > 0) {
         pollFailuresRef.current = 0;
         setIsReconnecting(false);
       }
-      const data = await res.json();
-      if (data.closed || (typeof data.error === 'string' && data.error.toLowerCase().includes('closed'))) {
-        handleRemoteRoomClosed(data.error || 'The host has ended the match and closed the room.');
-        return;
-      }
-      if (!data.unchanged) {
-        if (!data.stateVersion || data.stateVersion > currentVer) {
-          if (data.stateVersion) {
-            lastStateVersion.current = data.stateVersion;
-          }
-          if (data.lastAction?.action === 'dice' && data.lastAction.by !== roomSeatRef.current) {
-            const actionTime = data.lastAction.time || data.lastAction.rollId || data.stateVersion;
-            if (actionTime !== lastProcessedActionTime.current) {
-              lastProcessedActionTime.current = actionTime;
-              setRollPending(false);
-              playDiceSound(!mutedRef.current);
-              dispatch({ type: 'DICE', dice: data.lastAction.dice });
-            }
-          }
-          applyRoomData(data);
-        }
-      }
-      scheduleNextPoll();
-      return data;
     } catch {
-      pollFailuresRef.current += 1;
-      setIsReconnecting(true);
-      const base = getAdaptiveInterval();
-      const backoff = Math.min(30000, Math.round(base * Math.pow(1.5, Math.min(pollFailuresRef.current, 8))));
-      scheduleNextPoll(backoff);
+      if (isCurrentSession(session)) {
+        pollFailuresRef.current += 1;
+        setIsReconnecting(true);
+      }
     } finally {
       isPollingInFlight.current = false;
+      scheduleNextPoll();
     }
-  }, [resolveApiUrl, getApiHeaders, applyRoomData, scheduleNextPoll, getAdaptiveInterval, handleRemoteRoomClosed]);
+  }, [getRestSession, isCurrentSession, readRoomSnapshot, scheduleNextPoll]);
+  pollRoomRef.current = pollRoom;
 
-  // Fix 409 silent failure: resync and retry up to 3 times on conflict
-  const postRoomAction = useCallback(async (actionType: string, extra: Record<string, any> = {}, retryCount = 0): Promise<any> => {
-    const code = roomRef.current?.code || localStorage.getItem('business-room-code');
-    const token = code ? localStorage.getItem(`business-player-token:${code}`) : null;
-    if (!code || !token) return;
-    try {
-      const res = await fetch(`${resolveApiUrl()}?action=action`, {
+  const postRoomAction = useCallback((session: RoomSession, build: (current: RestRoom) => {
+    action: string;
+    state?: Game;
+    nextSeat?: number;
+  } | undefined) => submitRoomAction(
+    () => {
+      const current = restRoomRef.current;
+      if (!current || current.code !== session.code || current.token !== session.token || !isCurrentSession(session)) return;
+      const update = build(current);
+      if (update) return { ...session, ...update, expectedVersion: current.stateVersion };
+    },
+    async request => {
+      const url = new URL(resolveApiUrl(), location.href);
+      url.searchParams.set('action', 'action');
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getApiHeaders() },
-        body: JSON.stringify({
-          code,
-          token,
-          action: actionType,
-          expectedVersion: lastStateVersion.current,
-          ...extra
-        })
+        body: JSON.stringify(request)
       });
-      if (res.status === 409) {
-        if (pollTimerRef.current) {
-          clearTimeout(pollTimerRef.current);
-          pollTimerRef.current = null;
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) return { conflict: true };
+      if (isCurrentSession(session)) {
+        if (res.status === 404) {
+          handleRemoteRoomClosed(data.error);
+          return { conflict: false, data: undefined };
         }
-        isPollingInFlight.current = false;
-        const conflictData = await res.json().catch(() => ({}));
-        if (conflictData?.currentVersion) {
-          lastStateVersion.current = conflictData.currentVersion;
-        }
-        const syncedData = await pollRoom();
-        if (retryCount < 3) {
-          return await postRoomAction(actionType, extra, retryCount + 1);
-        }
-        return syncedData || conflictData;
+        if (!res.ok) throw new Error(data.error || `Room action failed (${res.status}).`);
+        if (!data.closed && request.action !== 'leave') applyRoomData(data, session);
+        setRoomError('');
       }
-      if (res.status === 404) {
-        const errData = await res.json().catch(() => ({}));
-        handleRemoteRoomClosed(errData?.error || 'The host has ended the match and closed the room.');
-        return;
-      }
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        if (errData?.closed || (typeof errData?.error === 'string' && errData.error.toLowerCase().includes('closed'))) {
-          handleRemoteRoomClosed(errData?.error || 'The host has ended the match and closed the room.');
-        }
-        return;
-      }
-      const data = await res.json();
-      if (data.closed || (typeof data.error === 'string' && data.error.toLowerCase().includes('closed'))) {
-        handleRemoteRoomClosed(data.error || 'The host has ended the match and closed the room.');
-        return;
-      }
-      if (data.stateVersion) {
-        lastStateVersion.current = data.stateVersion;
-      }
-      return data;
-    } catch (err) {
-      console.warn('postRoomAction error:', err);
+      return { conflict: false, data: data as (RoomSnapshot & { success?: boolean; closed?: boolean }) };
+    },
+    () => readRoomSnapshot(session, false)
+  ), [isCurrentSession, resolveApiUrl, getApiHeaders, handleRemoteRoomClosed, applyRoomData, readRoomSnapshot]);
+
+  const queueRoomAction = useCallback((run: (session: RoomSession) => Promise<void>) => {
+    const session = getRestSession();
+    if (!session) return Promise.resolve();
+    const task = restActionQueue.current.then(() => {
+      if (isCurrentSession(session)) return run(session);
+    });
+    restActionQueue.current = task.catch((error: Error) => {
+      if (isCurrentSession(session)) setRoomError(error.message);
+    });
+    return restActionQueue.current;
+  }, [getRestSession, isCurrentSession]);
+
+  const dispatch = useCallback((action: any) => {
+    if (!roomRef.current || action.type === 'LOAD') {
+      dispatchLocal(action);
+      return;
     }
-  }, [resolveApiUrl, getApiHeaders, pollRoom, handleRemoteRoomClosed]);
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      if (action.type === 'LEAVE_PLAYER') {
+        socket.send(JSON.stringify({ type: 'action', action: 'leave' }));
+      } else if (action.type === 'AUCTION_TICK') {
+        const state = reducer(gameRef.current, action);
+        socket.send(JSON.stringify({ type: 'action', action: 'auctionTick', state, expectedVersion: lastStateVersion.current }));
+      } else {
+        dispatchLocal(action);
+      }
+      return;
+    }
+    if (action.type === 'ASSETS') return;
+    const viewed = gameRef.current;
+    void queueRoomAction(async session => {
+      if (action.type === 'LEAVE_PLAYER') {
+        const result = await postRoomAction(session, current => current.seat === action.player ? { action: 'leave' } : undefined);
+        if (result?.success && isCurrentSession(session)) handleRemoteRoomClosed('You left the match.');
+        return;
+      }
+      const result = await postRoomAction(session, current => buildGameUpdate(current, viewed, action));
+      if (!result && action.type === 'START' && isCurrentSession(session)) {
+        setRoomError('The room roster changed. Check who has joined and start again.');
+      }
+    });
+  }, [queueRoomAction, postRoomAction, isCurrentSession, handleRemoteRoomClosed]);
+
 
   const connectRoomRest = useCallback(async (kind: 'create' | 'join' | 'resume') => {
+    const attempt = ++restConnectionAttempt.current;
+    const resumeSession = kind === 'resume' ? getRestSession() : null;
+    if (kind === 'resume' && !resumeSession) return;
     setRoomError('');
     setConnectionState('Connecting via Serverless REST (/api/room)...');
     try {
-      const apiUrl = resolveApiUrl();
-      if (kind === 'create') {
-        const res = await fetch(`${apiUrl}?action=create`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getApiHeaders() },
-          body: JSON.stringify({ nickname: nick.trim() || 'Player 1' })
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `Failed to create room (${res.status})`);
-        }
-        const data = await res.json();
-        lastStateVersion.current = data.stateVersion || 1;
-        applyRoomData(data);
-        setConnectionState('Room ready (Serverless REST). Share code to invite players.');
-        return data;
-      } else if (kind === 'join') {
-        const code = joinCode.trim().toUpperCase();
-        if (!code) throw new Error('Enter a 4-letter room code.');
-        const res = await fetch(`${apiUrl}?action=join`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getApiHeaders() },
-          body: JSON.stringify({
-            code,
-            nickname: nick.trim() || 'Player',
-            token: localStorage.getItem(`business-player-token:${code}`) || undefined
-          })
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `Failed to join room (${res.status})`);
-        }
-        const data = await res.json();
-        lastStateVersion.current = data.stateVersion || 1;
-        applyRoomData(data);
-        setConnectionState('Connected to room (Serverless REST).');
-        return data;
-      } else if (kind === 'resume') {
-        const code = localStorage.getItem('business-room-code');
-        const token = code ? localStorage.getItem(`business-player-token:${code}`) : null;
-        if (!token) return;
-        const res = await fetch(`${apiUrl}?action=resume`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getApiHeaders() },
-          body: JSON.stringify({ code, token })
-        });
-        if (!res.ok) {
-          localStorage.removeItem('business-room-code');
-          if (code) localStorage.removeItem(`business-player-token:${code}`);
+      const url = new URL(resolveApiUrl(), location.href);
+      url.searchParams.set('action', kind);
+      const code = joinCode.trim().toUpperCase();
+      if (kind === 'join' && !code) throw new Error('Enter a 4-letter room code.');
+      const body = kind === 'create'
+        ? { nickname: nick.trim() || 'Player 1' }
+        : kind === 'join'
+        ? { code, nickname: nick.trim() || 'Player', token: localStorage.getItem('business-player-token:' + code) }
+        : resumeSession;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getApiHeaders() },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (attempt !== restConnectionAttempt.current) return;
+      if (!res.ok) {
+        if (resumeSession && (res.status === 403 || res.status === 404)) {
+          if (isCurrentSession(resumeSession)) handleRemoteRoomClosed(data.error);
           return;
         }
-        const data = await res.json();
-        lastStateVersion.current = data.stateVersion || 1;
-        applyRoomData(data);
-        setConnectionState('Room session restored (Serverless REST).');
-        return data;
+        throw new Error(data.error || `Could not ${kind} the room (${res.status}).`);
       }
-    } catch (err: any) {
-      setConnectionState(err?.message || 'Serverless REST connection failed.');
-      setRoomError(err?.message || 'Could not connect to room via Serverless REST.');
+      const session = { code: data.code, token: data.token };
+      localStorage.setItem('business-room-code', session.code);
+      localStorage.setItem('business-player-token:' + session.code, session.token);
+      applyRoomData(data, session);
+      setConnectionState(kind === 'create' ? 'Room ready. Share the code to invite players.' : 'Connected to room.');
+    } catch (error) {
+      if (attempt !== restConnectionAttempt.current) return;
+      if (resumeSession && isCurrentSession(resumeSession)) {
+        pollFailuresRef.current += 1;
+        setIsReconnecting(true);
+        scheduleNextPoll();
+      }
+      setConnectionState('');
+      setRoomError(error instanceof Error ? error.message : 'Could not connect to the room.');
     }
-  }, [resolveApiUrl, getApiHeaders, nick, joinCode, applyRoomData]);
+  }, [resolveApiUrl, getApiHeaders, nick, joinCode, applyRoomData, getRestSession, isCurrentSession, handleRemoteRoomClosed, scheduleNextPoll]);
 
   const connectRoom = useCallback((kind: 'create' | 'join' | 'resume') => {
     setRoomError('');
@@ -1765,7 +1773,7 @@ export default function App() {
           setRoomError(m.message || m.reason);
           if (m.type === 'rejected' && roomRef.current?.game) {
             remoteRef.current = true;
-            dispatch({ type: 'LOAD', game: roomRef.current.game });
+            dispatchLocal({ type: 'LOAD', game: roomRef.current.game });
           }
           return;
         }
@@ -1780,7 +1788,7 @@ export default function App() {
           if (m.game?.players?.length) {
             setHomeView(false);
             remoteRef.current = true;
-            dispatch({ type: 'LOAD', game: m.game });
+            dispatchLocal({ type: 'LOAD', game: m.game });
           }
         }
         if (m.type === 'joined' || m.type === 'room' || m.type === 'presence') {
@@ -1793,27 +1801,28 @@ export default function App() {
           }
         }
         if (m.type === 'action') {
-          setRoom((old: any) => (old ? { ...old, activeSeat: m.activeSeat, game: m.game || old.game } : old));
+          setRoom((old: any) => old ? {
+            ...old,
+            activeSeat: m.activeSeat,
+            hostSeat: m.hostSeat ?? old.hostSeat,
+            players: m.players ?? old.players,
+            game: m.game || old.game,
+            lastAction: m.lastAction ?? old.lastAction
+          } : old);
           if (m.action === 'dice') {
             setRollPending(false);
             if (m.by !== roomSeatRef.current) playDiceSound(!mutedRef.current);
-            dispatch({ type: 'DICE', dice: m.dice });
+            dispatchLocal({ type: 'DICE', dice: m.dice });
             return;
           }
-          if (
-            m.game &&
-            m.by !== roomSeatRef.current &&
-            (m.action === 'gameState' ||
-              m.action === 'endTurn' ||
-              m.action === 'manageState' ||
-              m.action === 'auctionState' ||
-              m.action === 'tradeState' ||
-              m.action === 'leaveState')
-          ) {
+          const confirmedTransition = ['skipInactive', 'leave', 'auctionTick'].includes(m.action);
+          const remoteUpdate = m.by !== roomSeatRef.current &&
+            ['gameState', 'endTurn', 'manageState', 'auctionState', 'tradeState', 'leaveState'].includes(m.action);
+          if (m.game && (confirmedTransition || remoteUpdate)) {
             setHomeView(false);
             setSetup(false);
             remoteRef.current = true;
-            dispatch({ type: 'LOAD', game: m.game });
+            dispatchLocal({ type: 'LOAD', game: m.game });
           }
         }
       };
@@ -1823,12 +1832,13 @@ export default function App() {
         const code = localStorage.getItem('business-room-code');
         if (code) {
           setConnectionState('Switched to Serverless REST room sync.');
+          scheduleNextPoll();
         }
       };
     } catch {
       connectRoomRest(kind);
     }
-  }, [multiplayerMode, isVercel, hostServerUrl, connectRoomRest, resolveWsUrl, nick, joinCode, handleRemoteRoomClosed]);
+  }, [multiplayerMode, isVercel, hostServerUrl, connectRoomRest, resolveWsUrl, nick, joinCode, handleRemoteRoomClosed, scheduleNextPoll]);
 
   const p = game.players[game.turn];
   const visiblePos = visualPos[game.turn] ?? game.moveFrom ?? p?.pos ?? 0;
@@ -1838,14 +1848,14 @@ export default function App() {
   const receiveValue = wantCash + wantProps.reduce((v, id) => v + (board[id].price || 0), 0) + (wantJailCard ? 500 : 0);
   const offerPercent = Math.min(100, Math.round((offerValue / Math.max(1, offerValue + receiveValue)) * 100));
   const controlPlayer = room && roomSeat >= 0 ? roomSeat : game.turn;
-  const isHost = room ? roomSeat === 0 : true;
+  const isHost = !room || roomSeat === (room.hostSeat ?? 0);
   const manager = inspectedPlayer ?? controlPlayer;
   const mp = game.players[manager] || p;
   const assetsPlayer = mp;
   const canManageAssets = manager === controlPlayer;
   const canAct = !room || roomSeat === game.turn;
   const isMyTurn = canAct;
-  const canInteract = canAct || (game.phase === 'AUCTION' && game.auction?.turn === roomSeat);
+  const canInteract = room && game.phase === 'AUCTION' ? game.auction?.turn === roomSeat : canAct;
   const [copiedCode, setCopiedCode] = useState(false);
 
   const handleCopyRoom = useCallback(() => {
@@ -1920,7 +1930,7 @@ export default function App() {
       }
       dispatch({ type: 'APPLY_CARD' });
     }
-  }, [game.phase, game.pending, canAct, addTransfer]);
+  }, [game.phase, game.pending, canAct, addTransfer, dispatch]);
 
   // Memoized handlers for TableNavigation
   const handleOpenPlayers = useCallback(() => setPlayersModalOpen(true), []);
@@ -1928,7 +1938,7 @@ export default function App() {
     setInspectedPlayer(controlPlayer);
     setDrawer(true);
     dispatch({ type: 'ASSETS' });
-  }, [controlPlayer]);
+  }, [controlPlayer, dispatch]);
   const handleOpenBank = useCallback(() => setBankOpen(true), []);
   const handleOpenTrade = useCallback(() => {
     setInspectedPlayer(null);
@@ -1944,7 +1954,7 @@ export default function App() {
   }, [controlPlayer, game.players]);
   const handleOpenRules = useCallback(() => setRulesOpen(true), []);
   const handleHome = useCallback(() => setHomeView(true), []);
-  const handleToggleSpeed = useCallback(() => dispatch({ type: 'SPEED', speed: game.speed === 1 ? 2 : 1 }), [game.speed]);
+  const handleToggleSpeed = useCallback(() => dispatch({ type: 'SPEED', speed: game.speed === 1 ? 2 : 1 }), [game.speed, dispatch]);
   const handleToggleMute = useCallback(() => setMuted(m => !m), []);
 
   // Memoized handlers for Modals
@@ -1962,59 +1972,60 @@ export default function App() {
   const handleRequestEndGame = useCallback(() => {
     setConfirmEndGame(true);
   }, []);
-  const handleConfirmEndGame = useCallback(async () => {
-    setConfirmEndGame(false);
-    if (roomRef.current) {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        try {
-          socketRef.current.send(JSON.stringify({ type: 'action', action: 'endGame' }));
-        } catch {}
-      }
-      postRoomAction('endGame').catch(() => {});
-      if (pollTimerRef.current) {
-        clearTimeout(pollTimerRef.current);
-        pollTimerRef.current = null;
-      }
-      if (socketRef.current) {
-        try {
-          socketRef.current.close();
-        } catch {}
-        socketRef.current = null;
-      }
-      cleanRoomStorage();
-      setRoom(null);
-      setRoomSeat(-1);
-      setRoomLink('');
-    }
-    localStorage.removeItem(KEY);
+  const finishMatch = useCallback(() => {
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
+    cleanRoomStorage();
+    setRoom(null);
+    setRoomSeat(-1);
+    setRoomLink('');
+    localStorage.removeItem(KEY);
     setRollPending(false);
-    dispatch({ type: 'LOAD', game: blank() });
+    dispatchLocal({ type: 'LOAD', game: blank() });
     setHomeView(true);
     setRoomError('');
     setConnectionState('Match ended. Room resources released.');
     addTransfer('Match ended. Room resources released.', 'gain');
-  }, [postRoomAction, cleanRoomStorage, addTransfer]);
+  }, [cleanRoomStorage, addTransfer]);
+
+  const handleConfirmEndGame = useCallback(() => {
+    setConfirmEndGame(false);
+    if (!roomRef.current) {
+      finishMatch();
+    } else if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'action', action: 'endGame' }));
+    } else {
+      void queueRoomAction(async session => {
+        const result = await postRoomAction(session, current =>
+          current.seat === (current.hostSeat ?? 0) ? { action: 'endGame' } : undefined
+        );
+        if (result?.closed && isCurrentSession(session)) finishMatch();
+      });
+    }
+  }, [finishMatch, queueRoomAction, postRoomAction, isCurrentSession]);
   const handleCloseBank = useCallback(() => setBankOpen(false), []);
-  const handleBorrow = useCallback((tier: LoanTier) => dispatch({ type: 'LOAN', tier }), []);
-  const handleRepayEarly = useCallback((amt: number) => dispatch({ type: 'LOAN_REPAY', amount: amt }), []);
+  const handleBorrow = useCallback((tier: LoanTier) => dispatch({ type: 'LOAN', tier }), [dispatch]);
+  const handleRepayEarly = useCallback((amt: number) => dispatch({ type: 'LOAN_REPAY', amount: amt, actor: controlPlayer }), [dispatch, controlPlayer]);
   const handleClosePlayers = useCallback(() => setPlayersModalOpen(false), []);
 
   // Clock callbacks
-  const handleTimedEnd = useCallback(() => dispatch({ type: 'TIMED_END' }), []);
+  const handleTimedEnd = useCallback(() => dispatch({ type: 'TIMED_END' }), [dispatch]);
   const handleSkipInactive = useCallback(() => {
-    dispatch({ type: 'END' });
-    if (roomRef.current) {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: 'action', action: 'skipInactive' }));
-      } else {
-        postRoomAction('skipInactive');
-      }
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'action', action: 'skipInactive' }));
+    } else if (restRoomRef.current) {
+      const { activeSeat, lastAction } = restRoomRef.current;
+      void queueRoomAction(async session => {
+        await postRoomAction(session, current =>
+          current.activeSeat === activeSeat && current.lastAction?.time === lastAction?.time
+            ? { action: 'skipInactive' }
+            : undefined
+        );
+      });
     }
-  }, [postRoomAction]);
+  }, [queueRoomAction, postRoomAction]);
 
   useEffect(() => {
     if (game.players.length)
@@ -2029,26 +2040,19 @@ export default function App() {
       return;
     }
     const ws = socketRef.current;
-    const isWs = ws?.readyState === WebSocket.OPEN;
     const currentRoom = roomRef.current;
-    if (!currentRoom || !game.players.length) return;
+    if (ws?.readyState !== WebSocket.OPEN || !currentRoom || !game.players.length) return;
     if (JSON.stringify(game) === JSON.stringify(currentRoom.game)) return;
     let actionType = 'gameState';
     if (!currentRoom.game?.players?.length) actionType = 'gameState';
-    else if (roomSeatRef.current >= 0 && currentRoom.game?.players?.[roomSeatRef.current]?.active && !game.players[roomSeatRef.current]?.active)
-      actionType = 'leaveState';
     else if (JSON.stringify(game.trades) !== JSON.stringify(currentRoom.game?.trades)) actionType = 'tradeState';
     else if (currentRoom.game?.phase === 'AUCTION' && currentRoom.game.auction?.turn === roomSeatRef.current) actionType = 'auctionState';
     else if (game.turn !== currentRoom.activeSeat) actionType = 'endTurn';
     else if (roomSeatRef.current >= 0 && roomSeatRef.current !== game.turn) actionType = 'manageState';
     const isTurnOwner = roomSeatRef.current < 0 || roomSeatRef.current === currentRoom.activeSeat || roomSeatRef.current === game.turn;
     if ((actionType === 'gameState' || actionType === 'endTurn') && !isTurnOwner) return;
-    if (isWs) {
-      ws.send(JSON.stringify({ type: 'action', action: actionType, state: game, nextSeat: game.turn }));
-    } else {
-      postRoomAction(actionType, { state: game, nextSeat: game.turn });
-    }
-  }, [game, room?.code, room?.game, roomSeat, postRoomAction]);
+    ws.send(JSON.stringify({ type: 'action', action: actionType, state: game, nextSeat: game.turn }));
+  }, [game, room?.code, room?.game, roomSeat]);
 
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -2094,7 +2098,7 @@ export default function App() {
       setHomeView(false);
       setSetup(false);
       remoteRef.current = true;
-      dispatch({ type: 'LOAD', game: authoritative });
+      dispatchLocal({ type: 'LOAD', game: authoritative });
     }
   }, [room?.game, game.players.length]);
 
@@ -2262,13 +2266,12 @@ export default function App() {
       return () => clearTimeout(t);
     }
     if (game.phase === 'AUCTION') {
-      const isHost = !room || roomSeatRef.current === 0;
       if (isHost) {
         const t = setTimeout(() => dispatch({ type: 'AUCTION_TICK' }), 1000);
         return () => clearTimeout(t);
       }
     }
-  }, [game.phase, game.speed, game.moveFrom, game.moveSteps, game.turn, canAct, p, room, game.moveTo]);
+  }, [game.phase, game.speed, game.moveFrom, game.moveSteps, game.turn, game.moveTo, game.pending, game.auction?.seconds, canAct, isHost, dispatch]);
 
   // Remove phantom client dice: if server roll fails, report error rather than generating fake random dice
   const executeRoll = useCallback(async () => {
@@ -2278,16 +2281,17 @@ export default function App() {
     if (room && socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: 'action', action: 'roll' }));
     } else if (room) {
+      const viewed = game;
       try {
-        const data = await postRoomAction('roll');
-        if (data?.lastAction?.dice) {
-          dispatch({ type: 'DICE', dice: data.lastAction.dice });
-        } else {
-          setRoomError('Server roll failed to resolve. Please roll again.');
-        }
-      } catch (err: any) {
-        console.warn('executeRoll error:', err);
-        setRoomError(err?.message || 'Roll failed. Please roll again.');
+        await queueRoomAction(async session => {
+          const result = await postRoomAction(session, current =>
+            current.game && sameTurn(current.game, viewed, current.seat) ? { action: 'roll' } : undefined
+          );
+          if (!result) return;
+          const dice = result.lastAction?.dice;
+          if (!dice) throw new Error('The server did not return a roll. Please try again.');
+          await postRoomAction(session, current => buildGameUpdate(current, viewed, { type: 'DICE', dice }));
+        });
       } finally {
         setRollPending(false);
       }
@@ -2295,7 +2299,7 @@ export default function App() {
       dispatch({ type: 'DICE' });
       setRollPending(false);
     }
-  }, [rollPending, canAct, game.phase, room, postRoomAction]);
+  }, [rollPending, canAct, game, room, dispatch, queueRoomAction, postRoomAction]);
 
   useEffect(() => {
     const f = (e: KeyboardEvent) => {
@@ -2322,26 +2326,27 @@ export default function App() {
         setRoomError('Player nicknames must be unique.');
         return;
       }
-    } else if (roomSeat !== 0 || room.players?.length < 2 || count !== room.players.length) {
+    } else if (!isHost || room.players?.length < 2 || count !== room.players.length) {
       setRoomError('The room host can start after at least two players have joined.');
       return;
     }
     setHomeView(false);
     dispatch({
       type: 'START',
+      roster: room?.players?.map((player: { name: string }) => player.name),
       players: names.slice(0, count).map((name, i) => ({ name: name.trim() || `Player ${i + 1}`, color: colors[i] })),
       features,
       cash
     });
     setSetup(false);
-  }, [room, names, count, roomSeat, features, cash]);
+  }, [room, names, count, isHost, features, cash, dispatch]);
 
   const resume = useCallback(() => {
     try {
       const v = localStorage.getItem(KEY);
       if (v) dispatch({ type: 'LOAD', game: JSON.parse(v) as Game });
     } catch {}
-  }, []);
+  }, [dispatch]);
 
   const activePlayers = useMemo(() => game.players.filter(q => q.active), [game.players]);
 
@@ -2523,7 +2528,7 @@ export default function App() {
                   <button className={copiedCode ? 'copied' : ''} onClick={handleCopyRoom}>
                     {copiedCode ? 'Copied!' : 'Copy invite link'}
                   </button>
-                  {roomSeat === 0 && room.players?.length >= 2 && !room.game?.players?.length && (
+                  {isHost && room.players?.length >= 2 && !room.game?.players?.length && (
                     <button className="primary" onClick={() => setSetup(true)}>
                       Start room game
                     </button>
@@ -2536,7 +2541,8 @@ export default function App() {
                   className="primary"
                   onClick={() => {
                     setHomeView(false);
-                    if (room.game) dispatch({ type: 'LOAD', game: room.game });
+                    remoteRef.current = true;
+                    if (room.game) dispatchLocal({ type: 'LOAD', game: room.game });
                   }}
                 >
                   Resume room game <ArrowRight size={15} />
@@ -2715,22 +2721,22 @@ export default function App() {
                     <div className="room-seat" key={player.index}>
                       <i className={player.online ? 'online' : ''} />
                       <span>{player.name}</span>
-                      <small>{player.index === 0 ? 'HOST' : player.online ? 'CONNECTED' : 'RECONNECTING'}</small>
+                      <small>{player.index === (room.hostSeat ?? 0) ? 'HOST' : player.online ? 'CONNECTED' : 'RECONNECTING'}</small>
                     </div>
                   ))}
                 </div>
                 <p className="room-waiting">
                   {room.players?.length < 2
                     ? 'Waiting for at least one more player to join...'
-                    : roomSeat === 0
+                    : isHost
                     ? 'Your room is ready. Start when everyone has joined.'
                     : 'Waiting for the host to start the game...'}
                 </p>
                 {(roomError || connectionState) && <small className="room-lobby-message">{roomError || connectionState}</small>}
               </div>
               <footer>
-                <span>{roomSeat === 0 ? 'HOST CONTROLS' : 'YOU ARE PLAYER ' + (roomSeat + 1)}</span>
-                {roomSeat === 0 ? (
+                <span>{isHost ? 'HOST CONTROLS' : 'YOU ARE PLAYER ' + (roomSeat + 1)}</span>
+                {isHost ? (
                   <button className="primary" disabled={(room.players?.length || 0) < 2} onClick={() => setSetup(true)}>
                     Configure & start <ArrowRight size={16} />
                   </button>
@@ -2859,14 +2865,14 @@ export default function App() {
                     {[50, 100, 500].map(n => (
                       <button
                         className="secondary"
-                        disabled={game.players[game.auction!.turn]?.cash < game.auction!.highestBid + n}
+                        disabled={!canInteract || game.players[game.auction!.turn]?.cash < game.auction!.highestBid + n}
                         onClick={() => dispatch({ type: 'AUCTION_BID', amount: n })}
                         key={n}
                       >
                         +{money(n)}
                       </button>
                     ))}
-                    <button className="secondary" onClick={() => dispatch({ type: 'PASS' })}>
+                    <button className="secondary" disabled={!canInteract} onClick={() => dispatch({ type: 'PASS' })}>
                       Pass
                     </button>
                   </>
@@ -2953,13 +2959,14 @@ export default function App() {
                 {/* GameClock isolates the 1-second interval clocks and renders Skip Inactive Player when due */}
                 <GameClock
                   started={game.started}
-                  features={features}
+                  features={game.features}
                   phase={game.phase}
                   turn={game.turn}
                   rolls={game.rolls}
                   message={game.log[0] || game.message}
                   playersLength={game.players.length}
                   canAct={canAct}
+                  lastActionAt={room?.lastAction?.time}
                   playerName={p?.name}
                   onTimedEnd={handleTimedEnd}
                   onSkipInactive={handleSkipInactive}

@@ -392,11 +392,13 @@ export async function saveRoom(room) {
       index: s.index
     })),
     activeSeat: room.activeSeat,
+    hostSeat: room.hostSeat ?? 0,
     game: room.game,
     rollInFlight: Boolean(room.rollInFlight),
     rollId: room.rollId || 0,
     stateVersion: room.stateVersion || 0,
-    lastActive: room.lastActive || Date.now()
+    lastActive: room.lastActive || Date.now(),
+    lastAction: room.lastAction ?? null
   });
 
   try {

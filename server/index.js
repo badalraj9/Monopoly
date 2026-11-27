@@ -1,6 +1,7 @@
 import { randomUUID, randomInt } from 'node:crypto';
 import { WebSocketServer } from './websocket.js';
 import { initRedis, saveRoom, getRoom, getRoomCodeByToken, deleteRoom, loadAllPersistedRooms, getRedisClient } from './redis.js';
+import { advanceTurnForInactivity, removePlayerFromGame } from '../src/utils/playerDeparture.js';
 
 export function startRoomServer(port = Number(process.env.PORT || 8787)) {
   initRedis();
@@ -26,10 +27,14 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
   const propertyPrices = Object.fromEntries([[1,600],[3,600],[6,1000],[8,1000],[9,1200],[11,1400],[13,1400],[14,1600],[16,1800],[18,1800],[19,2000],[21,2200],[23,2200],[24,2400],[26,2600],[27,2600],[29,2800],[31,3000],[32,3000],[34,3200],[37,3500],[39,4000]]);
   const upgradeCost = id => id <= 3 ? 500 : id <= 9 ? 500 : id <= 14 ? 1000 : id <= 19 ? 1000 : id <= 24 ? 1500 : id <= 29 ? 1500 : 2000;
   const code = () => { const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; return Array.from({ length: 4 }, () => alphabet[randomInt(alphabet.length)]).join(''); };
-  const send = (socket, data) => socket.readyState === 1 && socket.send(JSON.stringify(data));
+  const send = (socket, data) => socket?.readyState === 1 && socket.send(JSON.stringify(data));
   const broadcast = (room, data) => room.seats.forEach(seat => send(seat.socket, data));
   function snapshot(room) {
-    return { type: 'room', code: room.code, players: room.seats.map(({ name, index, socket }) => ({ name, index, online: socket?.readyState === 1 })), activeSeat: room.activeSeat, game: room.game, stateVersion: room.stateVersion };
+    return { type: 'room', code: room.code, players: room.seats.map(({ name, index, socket }) => ({ name, index, online: socket?.readyState === 1 })), activeSeat: room.activeSeat, hostSeat: room.hostSeat ?? 0, game: room.game, stateVersion: room.stateVersion, lastAction: room.lastAction };
+  }
+  function recordAction(room, action, seat) {
+    room.lastAction = { action, by: seat.index, nickname: seat.name, time: Date.now() };
+    room.stateVersion += 1;
   }
   function clearRollInFlight(room) {
     room.rollInFlight = false;
@@ -118,10 +123,11 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
       const seat = room.seats.find(s => s.token === socket.playerToken);
       if (!seat) return send(socket, { type: 'error', message: 'Player seat is no longer active.' });
       enqueue(room, async () => {
+        if (rooms.get(room.code) !== room || !room.seats.includes(seat)) return;
         room.lastActive = Date.now();
         const action = msg.action || msg.type;
         if (action === 'endGame' || action === 'closeRoom') {
-          if (seat.index !== 0) {
+          if (seat.index !== (room.hostSeat ?? 0)) {
             return send(socket, { type: 'rejected', reason: 'Only the host can end the game.' });
           }
           broadcast(room, {
@@ -165,11 +171,58 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
           return;
         }
 
+        if (action === 'skipInactive') {
+          if (!room.game?.players?.length || room.game.phase === 'GAME_OVER' ||
+              Date.now() - (room.lastAction?.time ?? room.game.started ?? Date.now()) < 45000) {
+            return send(socket, { type: 'rejected', reason: 'Player has not been inactive long enough (45s required).' });
+          }
+          room.game = advanceTurnForInactivity(room.game);
+          room.activeSeat = room.game.turn;
+          clearRollInFlight(room);
+          recordAction(room, action, seat);
+          await saveRoom(room);
+          broadcast(room, { ...snapshot(room), type: 'action', action });
+          return;
+        }
+        if (action === 'leave' || action === 'leaveState') {
+          if (!room.game?.players?.[seat.index]?.active) {
+            return send(socket, { type: 'rejected', reason: 'This seat has already left the game.' });
+          }
+          room.game = removePlayerFromGame(room.game, seat.index);
+          room.seats = room.seats.filter(player => player !== seat);
+          if (room.activeSeat !== room.game.turn) clearRollInFlight(room);
+          room.activeSeat = room.game.turn;
+          if ((room.hostSeat ?? 0) === seat.index) room.hostSeat = room.seats[0]?.index;
+          recordAction(room, 'leave', seat);
+          if (room.seats.length) {
+            await saveRoom(room);
+            broadcast(room, { ...snapshot(room), type: 'action', action: 'leave' });
+          } else {
+            rooms.delete(room.code);
+            await deleteRoom(room.code);
+          }
+          await getRedisClient()?.del(`monopoly:token:${seat.token}`).catch(() => {});
+          send(socket, { type: 'roomClosed', reason: 'You left the match.' });
+          socket.close();
+          return;
+        }
+        if (action === 'auctionTick') {
+          if (seat.index !== (room.hostSeat ?? 0) || room.game?.phase !== 'AUCTION' ||
+              !msg.state || msg.expectedVersion !== room.stateVersion) {
+            return send(socket, { type: 'rejected', reason: 'This auction has already changed.' });
+          }
+          room.game = msg.state;
+          recordAction(room, action, seat);
+          await saveRoom(room);
+          broadcast(room, { ...snapshot(room), type: 'action', action });
+          return;
+        }
+
         const turnActions = new Set(['roll', 'resolve', 'buy', 'pass', 'endTurn', 'jailChoice', 'gameState']);
         if (turnActions.has(msg.action) && seat.index !== room.activeSeat) {
           return send(socket, { type: 'rejected', reason: 'Only the active player can take a turn action.' });
         }
-        if (!turnActions.has(msg.action) && !new Set(['inspect', 'upgrade', 'mortgage', 'unmortgage', 'loan', 'trade', 'gameState', 'manageState', 'auctionState', 'tradeState', 'leaveState', 'endGame', 'closeRoom']).has(msg.action)) {
+        if (!turnActions.has(msg.action) && !new Set(['inspect', 'upgrade', 'mortgage', 'unmortgage', 'loan', 'trade', 'gameState', 'manageState', 'auctionState', 'tradeState']).has(msg.action)) {
           return send(socket, { type: 'rejected', reason: 'Unknown room action.' });
         }
         if (msg.action === 'endTurn' && Number.isInteger(msg.nextSeat)) {
@@ -178,11 +231,6 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
           clearRollInFlight(room);
         }
         if (msg.action === 'gameState' && msg.state && typeof msg.state === 'object') { room.game = msg.state; if (msg.state.phase !== 'WAIT_FOR_ROLL') clearRollInFlight(room); }
-        if (msg.action === 'leaveState') {
-          const before = room.game, next = msg.state, oldPlayer = before?.players?.[seat.index], newPlayer = next?.players?.[seat.index];
-          if (!before || !next || !oldPlayer?.active || newPlayer?.active || newPlayer.owned.length || newPlayer.cash !== 0 || next.players.some((player,i) => i !== seat.index && JSON.stringify(player) !== JSON.stringify(before.players[i]))) return send(socket, { type: 'rejected', reason: 'A player can only leave their own seat.' });
-          room.game = next; room.activeSeat = next.turn; clearRollInFlight(room);
-        }
         if (msg.action === 'auctionState') {
           if (room.game?.phase !== 'AUCTION' || room.game.auction?.turn !== seat.index || msg.state?.phase === undefined) return send(socket, { type: 'rejected', reason: 'It is not your auction action.' });
           room.game = msg.state;
@@ -215,7 +263,8 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
           }, 5000);
           const dice = [randomInt(1, 7), randomInt(1, 7)];
           const consecutiveDoubles = dice[0] === dice[1] ? (room.game.rolls || 0) + 1 : 0;
-          broadcast(room, { type: 'action', action: 'dice', by: seat.index, dice, consecutiveDoubles, rollId: ++room.rollId, activeSeat: room.activeSeat, stateVersion: ++room.stateVersion });
+          recordAction(room, 'dice', seat);
+          broadcast(room, { type: 'action', action: 'dice', by: seat.index, dice, consecutiveDoubles, rollId: ++room.rollId, activeSeat: room.activeSeat, stateVersion: room.stateVersion, lastAction: room.lastAction });
           await saveRoom(room);
           return;
         }
@@ -242,9 +291,9 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
         }
         if (msg.action === 'loan' && room.game?.players?.[seat.index]?.loan) return send(socket, { type: 'rejected', reason: 'This player has already taken a loan.' });
         const event = { type: 'action', action: msg.action, payload: msg.payload, by: seat.index, nickname: seat.name, activeSeat: room.activeSeat, game: room.game };
-        room.stateVersion++;
+        recordAction(room, msg.action, seat);
         await saveRoom(room);
-        broadcast(room, { ...event, stateVersion: room.stateVersion });
+        broadcast(room, { ...event, stateVersion: room.stateVersion, lastAction: room.lastAction });
       });
     });
 
@@ -253,7 +302,8 @@ export function startRoomServer(port = Number(process.env.PORT || 8787)) {
       const room = rooms.get(socket.roomCode);
       if (room) {
         const seat = room.seats.find(s => s.token === socket.playerToken);
-        if (room.rollInFlight && (!seat || seat.index === room.activeSeat || seat.index === room.rollingSeat)) {
+        if (!seat || seat.socket !== socket) return;
+        if (room.rollInFlight && (seat.index === room.activeSeat || seat.index === room.rollingSeat)) {
           clearRollInFlight(room);
         }
         room.lastActive = Date.now();

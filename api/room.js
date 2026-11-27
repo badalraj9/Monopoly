@@ -2,6 +2,7 @@ import { randomUUID, randomInt } from 'node:crypto';
 import net from 'node:net';
 import tls from 'node:tls';
 import { EventEmitter } from 'node:events';
+import { advanceTurnForInactivity, removePlayerFromGame } from '../src/utils/playerDeparture.js';
 
 const ROOM_TTL_SECONDS = 86400; // 24 hours
 const KEY_PREFIX = 'monopoly:room:';
@@ -11,6 +12,44 @@ const ROOMS_SET_KEY = 'monopoly:rooms';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ROOM_CODE_REGEX = /^[A-Z0-9]{4}$/;
 const TURN_ACTIONS = ['roll', 'endTurn', 'buy', 'liquidate'];
+const STUCK_ROLL_MS = 5000;
+const AUTO_SKIP_MS = 120000;
+const CAS_ROOM_SCRIPT = `
+  local cached = redis.call('GET', KEYS[2])
+  local currentVer = cached and string.match(cached, '^(%d+)|')
+  if not currentVer then
+    local current = redis.call('GET', KEYS[1])
+    if current then
+      local ok, decoded = pcall(cjson.decode, current)
+      currentVer = ok and tostring(decoded.stateVersion or 0) or '0'
+    end
+  end
+  if ARGV[1] == '' then
+    if currentVer then
+      return redis.error_reply("VERSION_MISMATCH:" .. currentVer)
+    end
+  elseif not currentVer or currentVer ~= ARGV[1] then
+    return redis.error_reply("VERSION_MISMATCH:" .. (currentVer or 'missing'))
+  end
+  if ARGV[2] == '' then
+    redis.call('DEL', KEYS[1], KEYS[2])
+  else
+    redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+    redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[3])
+  end
+  return "OK"
+`;
+
+function roomWriteArgs(code, expectedVersion, payload, versionStamp) {
+  return [
+    'EVAL', CAS_ROOM_SCRIPT, 2, `${KEY_PREFIX}${code}`, `${VER_PREFIX}${code}`,
+    String(expectedVersion ?? ''), payload ?? '', String(ROOM_TTL_SECONDS), versionStamp ?? ''
+  ];
+}
+
+function isVersionConflict(error) {
+  return /VERSION_MISMATCH:/.test(error?.message || '');
+}
 
 if (!globalThis.__monopoly_store) {
   globalThis.__monopoly_store = {
@@ -95,42 +134,8 @@ class UpstashRestClient {
     return Array.isArray(res) ? res : [];
   }
 
-  async cas(key, expectedVersion, newPayload, ttlSeconds, newVersion) {
-    const script = `
-      local currentVer = nil
-      if KEYS[2] then
-        currentVer = redis.call('GET', KEYS[2])
-      end
-      if not currentVer then
-        local current = redis.call('GET', KEYS[1])
-        if current then
-          local ok, decoded = pcall(cjson.decode, current)
-          if ok and decoded and decoded.stateVersion ~= nil then
-            currentVer = tostring(decoded.stateVersion)
-          end
-        end
-      end
-      if currentVer and ARGV[1] ~= '' and tostring(currentVer) ~= tostring(ARGV[1]) then
-        return redis.error_reply("VERSION_MISMATCH:" .. tostring(currentVer))
-      end
-      redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
-      if KEYS[2] and ARGV[4] ~= '' then
-        redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[3])
-      end
-      return "OK"
-    `;
-    const verKey = `${VER_PREFIX}${key.slice(KEY_PREFIX.length)}`;
-    return this._fetch(
-      'EVAL',
-      script,
-      2,
-      key,
-      verKey,
-      expectedVersion !== undefined && expectedVersion !== null ? String(expectedVersion) : '',
-      newPayload,
-      String(ttlSeconds),
-      newVersion !== undefined && newVersion !== null ? String(newVersion) : ''
-    );
+  async cas(code, expectedVersion, payload, versionStamp) {
+    return this._fetch(...roomWriteArgs(code, expectedVersion, payload, versionStamp));
   }
 }
 
@@ -348,42 +353,8 @@ class NativeRedisClient extends EventEmitter {
     const res = await this.cmd('SMEMBERS', key);
     return Array.isArray(res) ? res : [];
   }
-  async cas(key, expectedVersion, newPayload, ttlSeconds, newVersion) {
-    const script = `
-      local currentVer = nil
-      if KEYS[2] then
-        currentVer = redis.call('GET', KEYS[2])
-      end
-      if not currentVer then
-        local current = redis.call('GET', KEYS[1])
-        if current then
-          local ok, decoded = pcall(cjson.decode, current)
-          if ok and decoded and decoded.stateVersion ~= nil then
-            currentVer = tostring(decoded.stateVersion)
-          end
-        end
-      end
-      if currentVer and ARGV[1] ~= '' and tostring(currentVer) ~= tostring(ARGV[1]) then
-        return redis.error_reply("VERSION_MISMATCH:" .. tostring(currentVer))
-      end
-      redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
-      if KEYS[2] and ARGV[4] ~= '' then
-        redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[3])
-      end
-      return "OK"
-    `;
-    const verKey = `${VER_PREFIX}${key.slice(KEY_PREFIX.length)}`;
-    return this.cmd(
-      'EVAL',
-      script,
-      2,
-      key,
-      verKey,
-      expectedVersion !== undefined && expectedVersion !== null ? String(expectedVersion) : '',
-      newPayload,
-      String(ttlSeconds),
-      newVersion !== undefined && newVersion !== null ? String(newVersion) : ''
-    );
+  async cas(code, expectedVersion, payload, versionStamp) {
+    return this.cmd(...roomWriteArgs(code, expectedVersion, payload, versionStamp));
   }
 }
 
@@ -409,33 +380,22 @@ class InMemoryClient {
   async expire(key, seconds) {
     return this.store.has(key) ? 1 : 0;
   }
-  async cas(key, expectedVersion, newPayload, ttlSeconds, newVersion) {
+  async cas(code, expectedVersion, payload, versionStamp) {
+    const key = `${KEY_PREFIX}${code}`;
+    const verKey = `${VER_PREFIX}${code}`;
     const current = this.store.get(key);
-    let currentVer = null;
-    if (key.startsWith(KEY_PREFIX)) {
-      const roomCode = key.slice(KEY_PREFIX.length);
-      currentVer = this.store.get(`${VER_PREFIX}${roomCode}`);
+    const cachedVersion = /^(\d+)\|/.exec(this.store.get(verKey))?.[1];
+    const version = cachedVersion ?? (current ? String(JSON.parse(current).stateVersion ?? 0) : null);
+    const expected = expectedVersion == null ? null : String(expectedVersion);
+    if (version !== expected) {
+      throw new Error(`VERSION_MISMATCH:${version ?? 'missing'}`);
     }
-    if (currentVer === null && current) {
-      try {
-        const decoded = JSON.parse(current);
-        if (decoded.stateVersion !== undefined) currentVer = String(decoded.stateVersion);
-      } catch {}
-    }
-
-    if (currentVer !== null && expectedVersion !== undefined && expectedVersion !== null && String(expectedVersion) !== '') {
-      if (String(currentVer) !== String(expectedVersion)) {
-        throw new Error(`VERSION_MISMATCH:${currentVer}`);
-      }
-    }
-
-    this.store.set(key, String(newPayload));
-    if (key.startsWith(KEY_PREFIX)) {
-      const roomCode = key.slice(KEY_PREFIX.length);
-      const v = newVersion !== undefined && newVersion !== null && String(newVersion) !== ''
-        ? String(newVersion)
-        : String(JSON.parse(newPayload).stateVersion || 1);
-      this.store.set(`${VER_PREFIX}${roomCode}`, v);
+    if (payload == null) {
+      this.store.delete(key);
+      this.store.delete(verKey);
+    } else {
+      this.store.set(key, payload);
+      this.store.set(verKey, versionStamp);
     }
     return 'OK';
   }
@@ -591,6 +551,12 @@ function isRateLimited(token, req) {
 
 function checkActionAuthorization(room, seat, clientAction, body) {
   const activeTurn = room.game?.turn !== undefined ? room.game.turn : (room.activeSeat ?? 0);
+  const hostSeat = room.hostSeat ?? 0;
+
+  if ((clientAction === 'auctionTick' || (clientAction === 'gameState' && !room.game?.players?.length && body.state?.players?.length)) &&
+      seat.index !== hostSeat) {
+    return { authorized: false, status: 403, error: 'Only the host can take this room action.' };
+  }
 
   // 1. Turn actions: verify caller seat matches activeSeat
   if (TURN_ACTIONS.includes(clientAction) || (clientAction === 'gameState' && room.game?.players?.length)) {
@@ -627,88 +593,33 @@ function checkActionAuthorization(room, seat, clientAction, body) {
   return { authorized: true };
 }
 
-function clearStuckRoll(room, storage) {
-  if (!room) return;
-  if (room.rollInFlight) {
-    const lastRollTime = room.rollStartTime || room.lastRollTime || room.lastAction?.time || room.lastActive || 0;
-    if (Date.now() - lastRollTime > 5000) {
-      room.rollInFlight = false;
-      room.rollStartTime = null;
-      if (storage && room.code) {
-        const roomKey = `${KEY_PREFIX}${room.code.toUpperCase()}`;
-        try {
-          storage.set(roomKey, JSON.stringify(room), 'EX', ROOM_TTL_SECONDS);
-        } catch {}
-      }
-    }
-  }
+function rollRecoveryAt(room) {
+  if (!room.rollInFlight) return 0;
+  return (room.rollStartTime || room.lastRollTime || room.lastAction?.time || room.lastActive || 0) + STUCK_ROLL_MS;
 }
 
-async function checkAndCleanStaleTurn(room, storage) {
-  if (!room || !room.game || room.game.phase === 'GAME_OVER') return false;
-  if (!Array.isArray(room.game.players) || room.game.players.length <= 1) return false;
+function turnRecoveryAt(room) {
+  if (room.game?.phase === 'GAME_OVER' || !Array.isArray(room.game?.players) || room.game.players.filter(player => player.active).length < 2) return 0;
+  const lastActionAt = room.lastAction?.time || room.lastActive;
+  return lastActionAt ? lastActionAt + AUTO_SKIP_MS : 0;
+}
 
-  const lastActiveTime = room.lastAction?.time || room.lastActive || 0;
-  if (!lastActiveTime) return false;
-
-  // Auto-advance if player turn inactive for > 120 seconds (120,000 ms)
-  if (Date.now() - lastActiveTime > 120000) {
-    const currentTurn = room.game.turn !== undefined ? room.game.turn : (room.activeSeat ?? 0);
-    let nextTurn = (currentTurn + 1) % room.game.players.length;
-    let checked = 0;
-    while (!room.game.players[nextTurn]?.active && checked < room.game.players.length) {
-      nextTurn = (nextTurn + 1) % room.game.players.length;
-      checked++;
-    }
-
-    room.game.turn = nextTurn;
-    room.game.phase = 'WAIT_FOR_ROLL';
-    room.game.rolls = 0;
-    room.activeSeat = nextTurn;
-    room.rollInFlight = false;
-    room.rollStartTime = null;
-    room.lastActive = Date.now();
-    room.lastAction = {
-      action: 'staleTurnAutoAdvance',
-      by: -1,
-      nickname: 'System',
-      skippedSeat: currentTurn,
-      nextSeat: nextTurn,
-      time: Date.now()
-    };
-    room.stateVersion = (room.stateVersion || 0) + 1;
-
-    if (storage && room.code) {
-      const roomCode = room.code.toUpperCase();
-      const roomKey = `${KEY_PREFIX}${roomCode}`;
-      const verKey = `${VER_PREFIX}${roomCode}`;
-      const newVersion = room.stateVersion;
-      try {
-        const payload = JSON.stringify({
-          code: roomCode,
-          seats: (room.seats || []).map(s => ({
-            token: s.token,
-            name: s.name,
-            index: s.index
-          })),
-          activeSeat: room.activeSeat ?? 0,
-          game: room.game ?? null,
-          rollInFlight: Boolean(room.rollInFlight),
-          rollStartTime: room.rollStartTime || null,
-          rollId: room.rollId || 0,
-          stateVersion: newVersion,
-          lastAction: room.lastAction || null,
-          lastActive: room.lastActive || Date.now()
-        });
-        await storage.set(roomKey, payload, 'EX', ROOM_TTL_SECONDS);
-        await storage.set(verKey, String(newVersion), 'EX', ROOM_TTL_SECONDS);
-      } catch (err) {
-        console.warn(`[Storage] Failed to persist stale turn auto-advance for ${roomCode}:`, err?.message || err);
-      }
-    }
-    return true;
-  }
-  return false;
+function advanceInactiveTurn(room, seat) {
+  const current = room.game?.turn ?? room.activeSeat ?? 0;
+  if (room.game?.players?.length) room.game = advanceTurnForInactivity(room.game);
+  const next = room.game?.turn ?? room.seats.find(player => player.index > current)?.index ?? room.seats[0]?.index ?? 0;
+  room.activeSeat = next;
+  room.rollInFlight = false;
+  room.rollStartTime = null;
+  room.lastActive = Date.now();
+  room.lastAction = {
+    action: seat ? 'skipInactive' : 'staleTurnAutoAdvance',
+    by: seat?.index ?? -1,
+    nickname: seat?.name ?? 'System',
+    skippedSeat: current,
+    nextSeat: next,
+    time: room.lastActive
+  };
 }
 
 function sanitizeGame(game) {
@@ -739,175 +650,78 @@ function sanitizeLastAction(lastAction) {
 }
 
 // --- High-level Room Operations ---
-async function refreshRoomTtl(storage, room) {
-  if (!room || !room.code) return;
-  const code = room.code.toUpperCase();
-  const roomKey = `${KEY_PREFIX}${code}`;
-  const verKey = `${VER_PREFIX}${code}`;
-  const promises = [
-    storage.expire(roomKey, ROOM_TTL_SECONDS).catch(() => {}),
-    storage.expire(verKey, ROOM_TTL_SECONDS).catch(() => {})
-  ];
-  if (Array.isArray(room.seats)) {
-    for (const seat of room.seats) {
-      if (seat.token) {
-        promises.push(storage.expire(`${TOKEN_PREFIX}${seat.token}`, ROOM_TTL_SECONDS).catch(() => {}));
-      }
-    }
-  }
-  await Promise.all(promises);
+function roomResponse(room, seat, includeToken = false) {
+  return {
+    code: room.code,
+    ...(seat ? { seat: seat.index } : {}),
+    ...(includeToken && seat ? { token: seat.token } : {}),
+    players: room.seats.map(({ name, index }) => ({ name, index, online: true })),
+    game: sanitizeGame(room.game),
+    activeSeat: room.activeSeat ?? 0,
+    hostSeat: room.hostSeat ?? 0,
+    stateVersion: room.stateVersion ?? 0,
+    lastAction: sanitizeLastAction(room.lastAction)
+  };
 }
 
 async function saveRoomToStorage(room, req, expectedVersion) {
-  if (!room || !room.code) return;
   const storage = getStorage(req);
-  const roomCode = room.code.toUpperCase();
-  const roomKey = `${KEY_PREFIX}${roomCode}`;
-  const verKey = `${VER_PREFIX}${roomCode}`;
+  const code = room.code.toUpperCase();
+  const recoveryAt = Math.min(rollRecoveryAt(room) || Infinity, turnRecoveryAt(room) || Infinity);
+  const versionStamp = [room.stateVersion, Number.isFinite(recoveryAt) ? recoveryAt : 0].join('|');
+  await storage.cas(code, expectedVersion, JSON.stringify(room), versionStamp);
 
-  if (room.closed || room.ended) {
-    try {
-      await storage.del(roomKey);
-    } catch {}
-    try {
-      await storage.del(verKey);
-    } catch {}
-    if (Array.isArray(room.seats)) {
-      for (const seat of room.seats) {
-        if (seat.token) {
-          try {
-            await storage.del(`${TOKEN_PREFIX}${seat.token}`);
-          } catch {}
-        }
-      }
-    }
-    try {
-      await storage.srem(ROOMS_SET_KEY, roomCode);
-    } catch {}
+  await Promise.allSettled([
+    storage.sadd(ROOMS_SET_KEY, code),
+    ...room.seats.map(seat => storage.set(TOKEN_PREFIX + seat.token, code, 'EX', ROOM_TTL_SECONDS))
+  ]);
+}
 
-    try {
-      if (typeof MEMORY_ROOMS !== 'undefined' && MEMORY_ROOMS) {
-        MEMORY_ROOMS.delete(roomCode);
-        MEMORY_ROOMS.delete(roomKey);
-        MEMORY_ROOMS.delete(verKey);
-      }
-      if (globalThis.MEMORY_ROOMS) {
-        globalThis.MEMORY_ROOMS.delete(roomCode);
-        globalThis.MEMORY_ROOMS.delete(roomKey);
-        globalThis.MEMORY_ROOMS.delete(verKey);
-      }
-      if (globalThis.__monopoly_store) {
-        globalThis.__monopoly_store.store.delete(roomKey);
-        globalThis.__monopoly_store.store.delete(verKey);
-        if (Array.isArray(room.seats)) {
-          for (const seat of room.seats) {
-            if (seat.token) {
-              globalThis.__monopoly_store.store.delete(`${TOKEN_PREFIX}${seat.token}`);
-            }
-          }
-        }
-        const s = globalThis.__monopoly_store.sets.get(ROOMS_SET_KEY);
-        if (s) s.delete(roomCode);
-      }
-    } catch {}
-    return;
-  }
-
-  const newVersion = room.stateVersion || 1;
-
-  const payload = JSON.stringify({
-    code: roomCode,
-    seats: room.seats.map(s => ({
-      token: s.token,
-      name: s.name,
-      index: s.index
-    })),
-    activeSeat: room.activeSeat ?? 0,
-    game: room.game ?? null,
-    rollInFlight: Boolean(room.rollInFlight),
-    rollStartTime: room.rollStartTime || null,
-    rollId: room.rollId || 0,
-    stateVersion: newVersion,
-    lastAction: room.lastAction || null,
-    lastActive: room.lastActive || Date.now()
-  });
-
-  if (expectedVersion !== undefined && expectedVersion !== null) {
-    // Optimistic Concurrency Control write via atomic CAS
-    await storage.cas(
-      roomKey,
-      String(expectedVersion),
-      payload,
-      ROOM_TTL_SECONDS,
-      String(newVersion)
-    );
-  } else {
-    await storage.set(roomKey, payload, 'EX', ROOM_TTL_SECONDS);
-    await storage.set(verKey, String(newVersion), 'EX', ROOM_TTL_SECONDS);
-  }
-
-  try {
-    await storage.sadd(ROOMS_SET_KEY, roomCode);
-    if (Array.isArray(room.seats)) {
-      for (const seat of room.seats) {
-        if (seat.token) {
-          await storage.set(`${TOKEN_PREFIX}${seat.token}`, roomCode, 'EX', ROOM_TTL_SECONDS);
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[Storage] post-save token maintenance warning for ${roomCode}:`, err?.message || err);
-  }
+async function closeRoomInStorage(room, req) {
+  const storage = getStorage(req);
+  await storage.cas(room.code, room.stateVersion ?? 0, null);
+  await Promise.allSettled([
+    storage.srem(ROOMS_SET_KEY, room.code),
+    ...room.seats.map(seat => storage.del(TOKEN_PREFIX + seat.token))
+  ]);
 }
 
 async function getRoomFromStorage(code, req) {
-  if (!code) return null;
-  const roomCode = String(code).toUpperCase().trim();
-  const roomKey = `${KEY_PREFIX}${roomCode}`;
   const storage = getStorage(req);
+  const key = KEY_PREFIX + code;
+  const read = async () => {
+    const raw = await storage.get(key);
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  };
+  const room = await read();
+  if (!room || room.closed) return room;
 
-  let room = null;
+  const now = Date.now();
+  const rollAt = rollRecoveryAt(room);
+  const turnAt = turnRecoveryAt(room);
+  if (turnAt && now >= turnAt) {
+    advanceInactiveTurn(room);
+  } else if (rollAt && now >= rollAt) {
+    room.rollInFlight = false;
+    room.rollStartTime = null;
+  } else {
+    return room;
+  }
+
+  const version = room.stateVersion ?? 0;
+  room.stateVersion = version + 1;
   try {
-    const raw = await storage.get(roomKey);
-    if (raw) {
-      room = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    }
-  } catch (err) {
-    console.warn(`[Storage] getRoom failed for ${roomCode}:`, err?.message || err);
+    await saveRoomToStorage(room, req, version);
+    return room;
+  } catch (error) {
+    if (!isVersionConflict(error)) throw error;
+    return read();
   }
-
-  // Fallback check in memory
-  if (!room) {
-    try {
-      const fallback = new InMemoryClient();
-      const memRaw = await fallback.get(roomKey);
-      if (memRaw) room = typeof memRaw === 'string' ? JSON.parse(memRaw) : memRaw;
-    } catch {}
-  }
-
-  if (room) {
-    clearStuckRoll(room, storage);
-    await checkAndCleanStaleTurn(room, storage);
-  }
-
-  return room;
 }
 
 async function getRoomCodeByTokenFromStorage(token, req) {
-  if (!token) return null;
-  const storage = getStorage(req);
-  try {
-    const code = await storage.get(`${TOKEN_PREFIX}${token}`);
-    if (code) return String(code).toUpperCase();
-  } catch {}
-
-  try {
-    const fallback = new InMemoryClient();
-    const code = await fallback.get(`${TOKEN_PREFIX}${token}`);
-    if (code) return String(code).toUpperCase();
-  } catch {}
-
-  return null;
+  const code = await getStorage(req).get(TOKEN_PREFIX + token);
+  return code ? String(code).toUpperCase() : null;
 }
 
 function generateRoomCode() {
@@ -982,24 +796,44 @@ async function getRequestBody(req) {
 // ==========================================
 
 export default async function handler(req, res) {
-  setCorsHeaders(res);
+  try {
+    return await handleRoomRequest(req, res);
+  } catch (error) {
+    const conflict = /VERSION_MISMATCH:(\d+|missing)/.exec(error?.message || '');
+    if (conflict) return sendVersionConflict(res, conflict[1] === 'missing' ? null : Number(conflict[1]));
+    console.warn('[Room] Request failed:', error?.message || error);
+    return sendJson(res, 503, {
+      error: 'Room storage is temporarily unavailable. Please try again.',
+      code: 'ROOM_STORAGE_UNAVAILABLE'
+    });
+  }
+}
 
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
+function sendVersionConflict(res, version, lastAction) {
+  return sendJson(res, 409, {
+    error: 'State version conflict',
+    code: 'VERSION_CONFLICT',
+    currentVersion: version,
+    lastAction: sanitizeLastAction(lastAction)
+  });
+}
+
+async function handleRoomRequest(req, res) {
+  setCorsHeaders(res);
+  const query = getQueryParams(req);
+  const method = req.method?.toUpperCase() || 'GET';
+
+  if (method === 'OPTIONS') {
     res.setHeader('Access-Control-Max-Age', '86400');
-    if (typeof res.status === 'function') {
-      return res.status(204).end();
-    }
+    if (typeof res.status === 'function') return res.status(204).end();
     res.statusCode = 204;
     return res.end();
   }
 
-  // Check Vercel deployment requirements: Fail loudly if on Vercel without Upstash credentials
   if (isVercelEnvironment()) {
-    const hasHeaderCreds = req.headers && req.headers['x-upstash-url'] && req.headers['x-upstash-token'];
+    const hasHeaderCreds = req.headers?.['x-upstash-url'] && req.headers?.['x-upstash-token'];
     const envCreds = getUpstashEnvCredentials();
-    const hasEnvCreds = Boolean(envCreds.url && envCreds.token);
-    if (!hasHeaderCreds && !hasEnvCreds) {
+    if (!hasHeaderCreds && !(envCreds.url && envCreds.token)) {
       return sendJson(res, 500, {
         error: 'Vercel Deployment Error: Missing Upstash Redis credentials. Please configure UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel Project Settings.',
         code: 'UPSTASH_CONFIG_MISSING'
@@ -1007,514 +841,201 @@ export default async function handler(req, res) {
     }
   }
 
-  const query = getQueryParams(req);
-  const method = req.method ? req.method.toUpperCase() : 'GET';
-
-  // ----------------------------------------------------
-  // GET /api/room?code=ABCD&since=V (Polling endpoint)
-  // ----------------------------------------------------
   if (method === 'GET') {
     const code = String(query.code || '').trim().toUpperCase();
-    if (!code) {
-      return sendJson(res, 400, { error: 'Room code is required.' });
-    }
-    if (!ROOM_CODE_REGEX.test(code)) {
-      return sendJson(res, 400, { error: 'Invalid room code format. Room code must be 4 alphanumeric characters.' });
-    }
+    if (!code) return sendJson(res, 400, { error: 'Room code is required.' });
+    if (!ROOM_CODE_REGEX.test(code)) return invalidRoomCode(res);
 
-    const storage = getStorage(req);
-    const sinceParam = query.since;
-    const hasSince = sinceParam !== undefined && sinceParam !== null && sinceParam !== '';
+    const since = /^\d+$/.test(query.since) ? Number(query.since) : null;
+    if (since !== null) {
+      const stamp = /^(\d+)\|(\d+)$/.exec(await getStorage(req).get(VER_PREFIX + code));
+      if (stamp && since === Number(stamp[1]) && (Number(stamp[2]) === 0 || Date.now() < Number(stamp[2]))) {
+        return sendJson(res, 200, { unchanged: true, stateVersion: since });
+      }
+    }
 
     const room = await getRoomFromStorage(code, req);
-    if (!room || room.closed) {
-      return sendJson(res, 404, {
-        closed: true,
-        error: 'This room has been closed by the host.'
-      });
-    }
+    if (!room || room.closed) return roomMissing(res);
+    if (since === (room.stateVersion ?? 0)) return sendJson(res, 200, { unchanged: true, stateVersion: since });
 
-    // Refresh TTL on room activity
-    refreshRoomTtl(storage, room).catch(() => {});
-
-    // Ensure version key is populated alongside room key
-    const currentVersion = room.stateVersion || 0;
-    storage.set(`${VER_PREFIX}${code}`, String(currentVersion), 'EX', ROOM_TTL_SECONDS).catch(() => {});
-
-    if (hasSince) {
-      const sinceNum = parseInt(sinceParam, 10);
-      if (!isNaN(sinceNum) && sinceNum === currentVersion) {
-        return sendJson(res, 200, {
-          unchanged: true,
-          stateVersion: currentVersion
-        });
-      }
-    }
-
-    const players = (room.seats || []).map(s => ({
-      name: s.name,
-      index: s.index,
-      online: true
-    }));
-
-    return sendJson(res, 200, {
-      code: room.code,
-      stateVersion: currentVersion,
-      game: sanitizeGame(room.game),
-      players,
-      activeSeat: room.activeSeat ?? 0,
-      lastAction: sanitizeLastAction(room.lastAction)
-    });
+    const token = /^Bearer (\S+)$/i.exec(req.headers?.authorization || '')?.[1];
+    const seat = token && room.seats.find(player => player.token === token);
+    const snapshot = roomResponse(room, seat);
+    if (token && !seat) snapshot.seat = -1;
+    return sendJson(res, 200, snapshot);
   }
 
-  // ----------------------------------------------------
-  // POST /api/room?action=create | join | resume | action
-  // ----------------------------------------------------
-  if (method === 'POST') {
-    const body = await getRequestBody(req);
-    const action = String(query.action || body.action || body.type || '').trim();
+  if (method !== 'POST') return sendJson(res, 405, { error: `Method ${method} not allowed.` });
+  const body = await getRequestBody(req) || {};
+  const action = String(query.action || body.action || body.type || '').trim();
 
-    // 1. POST /api/room?action=create
-    if (action === 'create') {
-      let code;
-      let attempts = 0;
-      do {
-        code = generateRoomCode();
-        attempts++;
-      } while (attempts < 10 && (await getRoomFromStorage(code, req)));
-
-      const token = randomUUID();
-      const hostName = String(body.nickname || body.name || 'Player 1').trim().slice(0, 24) || 'Player 1';
-
+  if (action === 'create') {
+    const token = randomUUID();
+    const name = String(body.nickname || body.name || 'Player 1').trim().slice(0, 24) || 'Player 1';
+    const seat = { token, name, index: 0 };
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const now = Date.now();
       const room = {
-        code,
-        seats: [
-          { token, name: hostName, index: 0 }
-        ],
+        code: generateRoomCode(),
+        seats: [seat],
         activeSeat: 0,
+        hostSeat: 0,
         game: null,
         stateVersion: 1,
-        lastAction: {
-          action: 'create',
-          by: 0,
-          nickname: hostName,
-          time: Date.now()
-        },
-        lastActive: Date.now()
+        lastAction: { action: 'create', by: 0, nickname: name, time: now },
+        lastActive: now
       };
-
-      await saveRoomToStorage(room, req);
-
-      const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
-      return sendJson(res, 200, {
-        code: room.code,
-        token,
-        seat: 0,
-        players,
-        game: null,
-        activeSeat: 0,
-        stateVersion: room.stateVersion
-      });
+      try {
+        await saveRoomToStorage(room, req);
+        return sendJson(res, 200, roomResponse(room, seat, true));
+      } catch (error) {
+        if (!isVersionConflict(error)) throw error;
+      }
     }
+    return sendJson(res, 503, { error: 'Could not allocate a room code. Please try again.' });
+  }
 
-    // 2. POST /api/room?action=join
-    if (action === 'join') {
-      const code = String(body.code || query.code || '').trim().toUpperCase();
-      if (!code) {
-        return sendJson(res, 400, { error: 'Room code is required.' });
-      }
-      if (!ROOM_CODE_REGEX.test(code)) {
-        return sendJson(res, 400, { error: 'Invalid room code format. Room code must be 4 alphanumeric characters.' });
-      }
+  let code = String(body.code || query.code || '').trim().toUpperCase();
+  const token = body.token || query.token;
+  if (action === 'resume') {
+    if (!token) return sendJson(res, 400, { error: 'Player token is required to resume.' });
+    if (!code) code = await getRoomCodeByTokenFromStorage(token, req);
+    if (!code) return sendJson(res, 404, { error: 'Room session not found for this token.' });
+  }
+  if (!code || (action !== 'join' && !token)) {
+    return sendJson(res, 400, { error: action === 'join' ? 'Room code is required.' : 'Room code and player token are required.' });
+  }
+  if (!ROOM_CODE_REGEX.test(code)) return invalidRoomCode(res);
 
-      let room = await getRoomFromStorage(code, req);
-      if (!room || room.closed) {
-        return sendJson(res, 404, { closed: true, error: room?.closed ? 'This room has been closed by the host.' : 'Room not found.' });
-      }
-
-      // Check if this player is rejoining with existing token
-      if (body.token) {
-        const existing = room.seats.find(s => s.token === body.token);
-        if (existing) {
-          refreshRoomTtl(getStorage(req), room).catch(() => {});
-          const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
-          return sendJson(res, 200, {
-            code: room.code,
-            token: existing.token,
-            seat: existing.index,
-            game: sanitizeGame(room.game),
-            players,
-            activeSeat: room.activeSeat ?? 0,
-            stateVersion: room.stateVersion || 0
-          });
-        }
-      }
-
-      if (room.seats.length >= 6) {
-        return sendJson(res, 400, { error: 'This room already has six players.' });
-      }
-
+  if (action === 'join') {
+    const newToken = randomUUID();
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const room = await getRoomFromStorage(code, req);
+      if (!room || room.closed) return roomMissing(res, 'Room not found.');
+      const existing = room.seats.find(seat => seat.token === token);
+      if (existing) return sendJson(res, 200, roomResponse(room, existing, true));
+      if (room.seats.length >= 6) return sendJson(res, 400, { error: 'This room already has six players.' });
       if (room.game?.players?.length) {
         return sendJson(res, 400, { error: 'This game has already started. Reconnect with your player token.' });
       }
 
-      const token = randomUUID();
-      let seatIndex = room.seats.length;
-      const nickname = String(body.nickname || body.name || `Player ${seatIndex + 1}`).trim().slice(0, 24) || `Player ${seatIndex + 1}`;
-
-      const newSeat = { token, name: nickname, index: seatIndex };
-      const prevVersion = room.stateVersion || 0;
-      room.seats.push(newSeat);
-      room.stateVersion = prevVersion + 1;
+      const index = room.seats.length;
+      const fallback = `Player ${index + 1}`;
+      const name = String(body.nickname || body.name || fallback).trim().slice(0, 24) || fallback;
+      const seat = { token: newToken, name, index };
+      const version = room.stateVersion ?? 0;
+      room.seats.push(seat);
+      room.stateVersion = version + 1;
       room.lastActive = Date.now();
-      room.lastAction = {
-        action: 'join',
-        by: seatIndex,
-        nickname,
-        time: Date.now()
-      };
-
+      room.lastAction = { action: 'join', by: index, nickname: name, time: room.lastActive };
       try {
-        await saveRoomToStorage(room, req, prevVersion);
-      } catch (err) {
-        if (err && String(err.message || '').includes('VERSION_MISMATCH')) {
-          // Re-fetch room and retry join once if room is not full
-          const freshRoom = await getRoomFromStorage(code, req);
-          if (freshRoom && freshRoom.seats.length < 6 && (!freshRoom.game?.players?.length)) {
-            seatIndex = freshRoom.seats.length;
-            newSeat.index = seatIndex;
-            freshRoom.seats.push(newSeat);
-            const freshPrev = freshRoom.stateVersion || 0;
-            freshRoom.stateVersion = freshPrev + 1;
-            freshRoom.lastActive = Date.now();
-            freshRoom.lastAction = {
-              action: 'join',
-              by: seatIndex,
-              nickname,
-              time: Date.now()
-            };
-            await saveRoomToStorage(freshRoom, req, freshPrev);
-            room = freshRoom;
-          } else {
-            return sendJson(res, 400, { error: 'This room already has six players or game has started.' });
-          }
-        } else {
-          throw err;
-        }
+        await saveRoomToStorage(room, req, version);
+        return sendJson(res, 200, roomResponse(room, seat, true));
+      } catch (error) {
+        if (!isVersionConflict(error) || attempt === 5) throw error;
       }
-
-      const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
-      return sendJson(res, 200, {
-        code: room.code,
-        token,
-        seat: seatIndex,
-        game: sanitizeGame(room.game),
-        players,
-        activeSeat: room.activeSeat ?? 0,
-        stateVersion: room.stateVersion
-      });
     }
-
-    // 3. POST /api/room?action=resume
-    if (action === 'resume') {
-      const token = body.token || query.token;
-      if (!token) {
-        return sendJson(res, 400, { error: 'Player token is required to resume.' });
-      }
-
-      let code = String(body.code || query.code || '').trim().toUpperCase();
-      if (code && !ROOM_CODE_REGEX.test(code)) {
-        return sendJson(res, 400, { error: 'Invalid room code format. Room code must be 4 alphanumeric characters.' });
-      }
-
-      if (!code) {
-        code = await getRoomCodeByTokenFromStorage(token, req);
-      }
-
-      if (!code || !ROOM_CODE_REGEX.test(code)) {
-        return sendJson(res, 404, { error: 'Room session not found for this token.' });
-      }
-
-      const room = await getRoomFromStorage(code, req);
-      if (!room || room.closed) {
-        return sendJson(res, 404, { closed: true, error: room?.closed ? 'This room has been closed by the host.' : 'Room not found.' });
-      }
-
-      const seat = room.seats.find(s => s.token === token);
-      if (!seat) {
-        return sendJson(res, 403, { error: 'That player session has expired or is invalid.' });
-      }
-
-      room.lastActive = Date.now();
-      await refreshRoomTtl(getStorage(req), room);
-
-      const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
-      return sendJson(res, 200, {
-        code: room.code,
-        token: seat.token,
-        seat: seat.index,
-        game: sanitizeGame(room.game),
-        players,
-        activeSeat: room.activeSeat ?? 0,
-        stateVersion: room.stateVersion || 0,
-        lastAction: sanitizeLastAction(room.lastAction)
-      });
-    }
-
-    // 4. POST /api/room?action=action (or action inside body)
-    // Supports game actions: roll, endTurn, buy, liquidate, auctionBid, tradeAccept, tradeReject, skipInactive, leave, etc.
-    const isGameAction = action === 'action' || !['create', 'join', 'resume'].includes(action);
-    if (isGameAction) {
-      const code = String(body.code || query.code || '').trim().toUpperCase();
-      const token = body.token || query.token;
-
-      if (!code || !token) {
-        return sendJson(res, 400, { error: 'Room code and player token are required.' });
-      }
-
-      if (!ROOM_CODE_REGEX.test(code)) {
-        return sendJson(res, 400, { error: 'Invalid room code format. Room code must be 4 alphanumeric characters.' });
-      }
-
-      // Enforce rate limit (max 10 actions per second per player token)
-      if (isRateLimited(token, req)) {
-        return sendJson(res, 429, { error: 'Rate limit exceeded, please slow down.' });
-      }
-
-      const room = await getRoomFromStorage(code, req);
-      if (!room || room.closed) {
-        return sendJson(res, 404, { closed: true, error: room?.closed ? 'This room has been closed by the host.' : 'Room not found.' });
-      }
-
-      const seat = room.seats.find(s => s.token === token);
-      if (!seat) {
-        return sendJson(res, 403, { error: 'Player seat is no longer active.' });
-      }
-
-      const clientAction = body.action || query.action || action || 'action';
-
-      // Host Action: End Game and immediately release all server resources
-      if (clientAction === 'endGame' || clientAction === 'closeRoom' || action === 'endGame' || action === 'closeRoom') {
-        if (seat.index !== 0) {
-          return sendJson(res, 403, { error: 'Only the room host can end the game and close the room.' });
-        }
-        room.closed = true;
-        room.ended = true;
-        await saveRoomToStorage(room, req);
-        return sendJson(res, 200, {
-          success: true,
-          closed: true,
-          message: 'Room ended and resources released.'
-        });
-      }
-
-      // Stuck-State Recovery: Action 'skipInactive'
-      if (clientAction === 'skipInactive') {
-        const inactivityMs = Date.now() - (room.lastActive || 0);
-        if (inactivityMs <= 45000) {
-          return sendJson(res, 400, {
-            error: 'Player has not been inactive long enough (45s required).',
-            remainingMs: Math.max(0, 45000 - inactivityMs)
-          });
-        }
-        if (room.game?.phase === 'GAME_OVER') {
-          return sendJson(res, 400, { error: 'Game is already over.' });
-        }
-
-        const currentTurn = room.game?.turn !== undefined ? room.game.turn : (room.activeSeat ?? 0);
-        let nextTurn = (currentTurn + 1) % (room.game?.players?.length || room.seats.length || 1);
-        if (room.game?.players && Array.isArray(room.game.players)) {
-          let checked = 0;
-          while (!room.game.players[nextTurn]?.active && checked < room.game.players.length) {
-            nextTurn = (nextTurn + 1) % room.game.players.length;
-            checked++;
-          }
-          room.game.turn = nextTurn;
-          room.game.phase = 'WAIT_FOR_ROLL';
-          room.game.rolls = 0;
-        }
-        room.activeSeat = nextTurn;
-        room.rollInFlight = false;
-        room.lastActive = Date.now();
-        room.lastAction = {
-          action: 'skipInactive',
-          by: seat.index,
-          nickname: seat.name,
-          skippedSeat: currentTurn,
-          nextSeat: nextTurn,
-          time: Date.now()
-        };
-
-        const expectedVerForCas = body.expectedVersion !== undefined && body.expectedVersion !== null
-          ? body.expectedVersion
-          : room.stateVersion;
-
-        room.stateVersion = (room.stateVersion || 0) + 1;
-        await saveRoomToStorage(room, req, expectedVerForCas);
-
-        const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
-        return sendJson(res, 200, {
-          success: true,
-          stateVersion: room.stateVersion,
-          game: sanitizeGame(room.game),
-          activeSeat: room.activeSeat ?? 0,
-          players,
-          lastAction: sanitizeLastAction(room.lastAction)
-        });
-      }
-
-      // Host Resilience: Transfer seat 0 if host leaves
-      if (clientAction === 'leave' || clientAction === 'leaveRoom' || clientAction === 'leavePlayer') {
-        const leavingSeatIndex = seat.index;
-        room.seats = room.seats.filter(s => s.token !== token);
-        if (leavingSeatIndex === 0 && room.seats.length > 0) {
-          // Transfer seat 0 to next available player
-          room.seats[0].index = 0;
-          for (let i = 1; i < room.seats.length; i++) {
-            room.seats[i].index = i;
-          }
-        }
-        if (room.game?.players?.[leavingSeatIndex]) {
-          room.game.players[leavingSeatIndex].active = false;
-        }
-        if (room.activeSeat === leavingSeatIndex && room.seats.length > 0) {
-          room.activeSeat = room.seats[0].index;
-          if (room.game) room.game.turn = room.activeSeat;
-        }
-        room.lastActive = Date.now();
-        room.lastAction = {
-          action: 'leave',
-          by: leavingSeatIndex,
-          nickname: seat.name,
-          time: Date.now()
-        };
-        room.stateVersion = (room.stateVersion || 0) + 1;
-        await saveRoomToStorage(room, req, body.expectedVersion ?? (room.stateVersion - 1));
-        const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
-        return sendJson(res, 200, {
-          success: true,
-          stateVersion: room.stateVersion,
-          game: sanitizeGame(room.game),
-          activeSeat: room.activeSeat ?? 0,
-          players,
-          lastAction: sanitizeLastAction(room.lastAction)
-        });
-      }
-
-      // 1. Seat & Turn Authorization Check
-      const auth = checkActionAuthorization(room, seat, clientAction, body);
-      if (!auth.authorized) {
-        return sendJson(res, auth.status || 403, { error: auth.error || 'Unauthorized action.' });
-      }
-
-      // 2. Optimistic Concurrency Control (OCC) Check:
-      // If body.expectedVersion is provided and does not match room.stateVersion,
-      // reject with HTTP 409
-      if (body.expectedVersion !== undefined && body.expectedVersion !== null) {
-        if (String(body.expectedVersion) !== String(room.stateVersion)) {
-          return sendJson(res, 409, {
-            error: 'State version conflict',
-            code: 'VERSION_CONFLICT',
-            currentVersion: room.stateVersion,
-            lastAction: sanitizeLastAction(room.lastAction)
-          });
-        }
-      }
-
-      // 3. Process Game Action
-      if (clientAction === 'roll') {
-        // Server-Side Dice Generation: crypto randomInt(1, 7). Never trust client-sent dice!
-        const d1 = randomInt(1, 7);
-        const d2 = randomInt(1, 7);
-        const dice = [d1, d2];
-        const consecutiveDoubles = d1 === d2 ? ((room.game?.rolls || 0) + 1) : 0;
-        room.rollInFlight = false;
-        room.rollStartTime = null;
-        if (body.state && typeof body.state === 'object') {
-          room.game = body.state;
-        }
-        room.lastAction = {
-          action: 'dice',
-          by: seat.index,
-          nickname: seat.name,
-          dice,
-          consecutiveDoubles,
-          rollId: Date.now(),
-          time: Date.now()
-        };
-      } else if (clientAction === 'endTurn') {
-        if (Number.isInteger(body.nextSeat)) {
-          room.activeSeat = body.nextSeat;
-        }
-        if (body.state && typeof body.state === 'object') {
-          room.game = body.state;
-        }
-        room.lastAction = {
-          action: 'endTurn',
-          by: seat.index,
-          nickname: seat.name,
-          nextSeat: room.activeSeat,
-          payload: body.payload,
-          time: Date.now()
-        };
-      } else {
-        if (body.state && typeof body.state === 'object') {
-          room.game = body.state;
-          if (body.state.turn !== undefined && Number.isInteger(body.state.turn)) {
-            room.activeSeat = body.state.turn;
-          }
-        }
-        if (Number.isInteger(body.activeSeat)) {
-          room.activeSeat = body.activeSeat;
-        }
-        if (Number.isInteger(body.nextSeat)) {
-          room.activeSeat = body.nextSeat;
-        }
-        room.lastAction = {
-          action: clientAction,
-          by: seat.index,
-          nickname: seat.name,
-          payload: body.payload,
-          dice: body.dice,
-          time: Date.now()
-        };
-      }
-
-      const expectedVerForCas = body.expectedVersion !== undefined && body.expectedVersion !== null
-        ? body.expectedVersion
-        : room.stateVersion;
-
-      room.stateVersion = (room.stateVersion || 0) + 1;
-      room.lastActive = Date.now();
-
-      try {
-        await saveRoomToStorage(room, req, expectedVerForCas);
-      } catch (err) {
-        if (err && String(err.message || '').includes('VERSION_MISMATCH')) {
-          const latestRoom = await getRoomFromStorage(code, req);
-          return sendJson(res, 409, {
-            error: 'State version conflict',
-            code: 'VERSION_CONFLICT',
-            currentVersion: latestRoom?.stateVersion ?? room.stateVersion,
-            lastAction: sanitizeLastAction(latestRoom?.lastAction ?? room.lastAction)
-          });
-        }
-        throw err;
-      }
-
-      const players = room.seats.map(s => ({ name: s.name, index: s.index, online: true }));
-      return sendJson(res, 200, {
-        success: true,
-        stateVersion: room.stateVersion,
-        game: sanitizeGame(room.game),
-        activeSeat: room.activeSeat ?? 0,
-        players,
-        lastAction: sanitizeLastAction(room.lastAction)
-      });
-    }
-
-    return sendJson(res, 400, { error: `Unsupported room action: '${action}'` });
   }
 
-  return sendJson(res, 405, { error: `Method ${method} not allowed.` });
+  if (action !== 'resume' && isRateLimited(token, req)) {
+    return sendJson(res, 429, { error: 'Rate limit exceeded, please slow down.' });
+  }
+  const room = await getRoomFromStorage(code, req);
+  if (!room || room.closed) return roomMissing(res, 'Room not found.');
+  const seat = room.seats.find(player => player.token === token);
+  if (action === 'resume') {
+    if (!seat) return sendJson(res, 403, { error: 'That player session has expired or is invalid.' });
+    return sendJson(res, 200, roomResponse(room, seat, true));
+  }
+  if (!seat) return sendJson(res, 403, { error: 'Player seat is no longer active.' });
+
+  const clientAction = body.action || query.action || action || 'action';
+  const version = room.stateVersion ?? 0;
+  if (body.expectedVersion != null && String(body.expectedVersion) !== String(version)) {
+    return sendVersionConflict(res, version, room.lastAction);
+  }
+
+  if (['endGame', 'closeRoom'].includes(action) || ['endGame', 'closeRoom'].includes(clientAction)) {
+    if (seat.index !== (room.hostSeat ?? 0)) {
+      return sendJson(res, 403, { error: 'Only the room host can end the game and close the room.' });
+    }
+    await closeRoomInStorage(room, req);
+    return sendJson(res, 200, { success: true, closed: true, message: 'Room ended and resources released.' });
+  }
+
+  if (['leave', 'leaveRoom', 'leavePlayer', 'leaveState'].includes(clientAction)) {
+    const remaining = room.seats.filter(player => player !== seat);
+    if (!remaining.length) {
+      await closeRoomInStorage(room, req);
+      return sendJson(res, 200, { success: true, closed: true });
+    }
+
+    room.seats = remaining;
+    const host = remaining.find(player => player.index === (room.hostSeat ?? 0)) || remaining[0];
+    if (room.game?.players?.length) {
+      room.game = removePlayerFromGame(room.game, seat.index);
+      if (room.activeSeat === seat.index) {
+        room.rollInFlight = false;
+        room.rollStartTime = null;
+      }
+      room.activeSeat = room.game.turn;
+    } else {
+      const active = remaining.find(player => player.index === room.activeSeat) || remaining[0];
+      remaining.forEach((player, index) => { player.index = index; });
+      room.activeSeat = active.index;
+    }
+    room.hostSeat = host.index;
+    room.lastActive = Date.now();
+    room.lastAction = { action: 'leave', by: seat.index, nickname: seat.name, time: room.lastActive };
+    room.stateVersion = version + 1;
+    await saveRoomToStorage(room, req, version);
+    await getStorage(req).del(TOKEN_PREFIX + seat.token).catch(() => {});
+    return sendJson(res, 200, { success: true, ...roomResponse(room) });
+  }
+
+  if (clientAction === 'skipInactive') {
+    const inactivity = Date.now() - (room.lastActive || 0);
+    if (inactivity < 45000) {
+      return sendJson(res, 400, { error: 'Player has not been inactive long enough (45s required).', remainingMs: 45000 - inactivity });
+    }
+    if (room.game?.phase === 'GAME_OVER') return sendJson(res, 400, { error: 'Game is already over.' });
+    advanceInactiveTurn(room, seat);
+  } else {
+    const auth = checkActionAuthorization(room, seat, clientAction, body);
+    if (!auth.authorized) return sendJson(res, auth.status, { error: auth.error });
+
+    const now = Date.now();
+    room.lastActive = now;
+    room.lastAction = { action: clientAction, by: seat.index, nickname: seat.name, time: now };
+    if (clientAction === 'roll') {
+      const dice = [randomInt(1, 7), randomInt(1, 7)];
+      room.rollInFlight = false;
+      room.rollStartTime = null;
+      room.rollId = (room.rollId || 0) + 1;
+      if (body.state && typeof body.state === 'object') room.game = body.state;
+      Object.assign(room.lastAction, {
+        action: 'dice', dice, rollId: room.rollId,
+        consecutiveDoubles: dice[0] === dice[1] ? (room.game?.rolls || 0) + 1 : 0
+      });
+    } else {
+      if (body.state && typeof body.state === 'object') room.game = body.state;
+      const next = body.nextSeat ?? body.activeSeat ?? body.state?.turn;
+      if (Number.isInteger(next)) room.activeSeat = next;
+      room.lastAction.payload = body.payload;
+      if (clientAction === 'endTurn') room.lastAction.nextSeat = room.activeSeat;
+      else room.lastAction.dice = body.dice;
+    }
+  }
+
+  room.stateVersion = version + 1;
+  await saveRoomToStorage(room, req, version);
+  return sendJson(res, 200, { success: true, ...roomResponse(room, seat) });
+}
+
+function invalidRoomCode(res) {
+  return sendJson(res, 400, { error: 'Invalid room code format. Room code must be 4 alphanumeric characters.' });
+}
+
+function roomMissing(res, error = 'This room has been closed by the host.') {
+  return sendJson(res, 404, { closed: true, error });
 }

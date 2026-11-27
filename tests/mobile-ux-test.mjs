@@ -111,7 +111,7 @@ async function runMobileUxTests() {
   assert(waitingTurn.className.includes('waiting-turn'), 'Non-active turn has .waiting-turn class');
   assert(waitingTurn.badgeText === 'Waiting for Bob...', 'Non-active turn displays "Waiting for [Player Name]..."');
 
-  assert(appTsx.includes('isMyTurn ? <span className="turn-banner-content"><b>YOUR TURN</b> <span className="turn-action-hint">— Roll Dice</span>'), 'App.tsx renders prominent "YOUR TURN — Roll Dice" badge');
+  assert(/isMyTurn\s*\?\s*\(\s*<span className="turn-banner-content">\s*<b>YOUR TURN<\/b>\s*<span className="turn-action-hint">— Roll Dice<\/span>/.test(appTsx), 'App.tsx renders prominent "YOUR TURN — Roll Dice" badge');
   assert(appTsx.includes('Waiting for <b>{p?.name}</b>...'), 'App.tsx renders "Waiting for [Player Name]..."');
   assert(styleCss.includes('.turn-banner.my-turn-highlight'), 'style.css defines glowing highlight and pulse animation for my-turn');
 
